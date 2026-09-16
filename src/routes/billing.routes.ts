@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { createInvoice, getInvoiceById, getPatientInvoices, recordPayment, getMyInvoices } from "../controllers/billing.controller.js";
-import { authenticate, authorize } from "../middleware/auth.middleware.js";
+import { createInvoice, getInvoiceById, getPatientInvoices, recordPayment, getMyInvoices } from "../controllers/billing.controller";
+import { authenticate, authorize } from "../middleware/auth.middleware";
 
 export const billingRoutes = Router();
 

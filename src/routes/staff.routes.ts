@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { getStaffDashboard, getAllPatients, getPatientById, uploadDocument } from "../controllers/staff.controller.js";
-import { authenticate, authorize } from "../middleware/auth.middleware.js";
+import { getStaffDashboard, getAllPatients, getPatientById, uploadDocument } from "../controllers/staff.controller";
+import { authenticate, authorize } from "../middleware/auth.middleware";
 
 export const staffRoutes = Router();
 

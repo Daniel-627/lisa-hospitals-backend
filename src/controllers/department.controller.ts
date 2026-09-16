@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import { db, departments, doctors, staff, users } from "../db";
 import { eq } from "drizzle-orm";
-import { sendSuccess, sendError } from "../utils/response.js";
+import { sendSuccess, sendError } from "../utils/response";
 
 export const getAllDepartments = async (req: Request, res: Response) => {
   try {

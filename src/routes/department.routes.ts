@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { getAllDepartments, getDepartmentBySlug, getDepartmentDoctors } from "../controllers/department.controller.js";
+import { getAllDepartments, getDepartmentBySlug, getDepartmentDoctors } from "../controllers/department.controller";
 
 export const departmentRoutes = Router();
 
