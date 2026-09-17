@@ -10,6 +10,7 @@ import { appointmentRoutes } from "./routes/appointment.routes";
 import { patientRoutes } from "./routes/patient.routes";
 import { staffRoutes } from "./routes/staff.routes";
 import { billingRoutes } from "./routes/billing.routes";
+import { syncRoutes } from "./routes/sync.routes";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -33,6 +34,7 @@ app.use("/api/appointments", appointmentRoutes);
 app.use("/api/patients",     patientRoutes);
 app.use("/api/staff",        staffRoutes);
 app.use("/api/billing",      billingRoutes);
+app.use("/api/sync",         syncRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ success: false, error: "Route not found" });

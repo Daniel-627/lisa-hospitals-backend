@@ -101,6 +101,23 @@ export const departmentSlugEnum = pgEnum("department_slug", [
   "critical_care_icu",
 ]);
 
+export const syncActionEnum = pgEnum("sync_action", [
+  "CREATE_APPOINTMENT",
+  "CANCEL_APPOINTMENT",
+  "UPDATE_TRIAGE",
+  "CREATE_CONSULTATION",
+  "CREATE_LAB_ORDER",
+  "UPDATE_PATIENT_PROFILE",
+  "CREATE_VISIT",
+]);
+
+export const syncStatusEnum = pgEnum("sync_status", [
+  "pending",
+  "synced",
+  "failed",
+  "conflict",
+]);
+
 // ── CORE TABLES ───────────────────────────────────────────────────────────────
 
 export const users = pgTable("users", {
@@ -488,3 +505,18 @@ export const invoicesRelations = relations(invoices, ({ one, many }) => ({
   items:    many(invoiceItems),
   payments: many(payments),
 }));
+
+
+
+export const syncQueue = pgTable("sync_queue", {
+  id:          uuid("id").primaryKey().defaultRandom(),
+  userId:      uuid("user_id").notNull().references(() => users.id),
+  deviceId:    varchar("device_id", { length: 100 }).notNull(),
+  action:      syncActionEnum("action").notNull(),
+  payload:     text("payload").notNull(),
+  status:      syncStatusEnum("status").notNull().default("pending"),
+  errorMessage:varchar("error_message", { length: 500 }),
+  createdOfflineAt: timestamp("created_offline_at").notNull(),
+  syncedAt:    timestamp("synced_at"),
+  createdAt:   timestamp("created_at").notNull().defaultNow(),
+});
