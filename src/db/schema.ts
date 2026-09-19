@@ -121,18 +121,20 @@ export const syncStatusEnum = pgEnum("sync_status", [
 // ── CORE TABLES ───────────────────────────────────────────────────────────────
 
 export const users = pgTable("users", {
-  id:              uuid("id").primaryKey().defaultRandom(),
-  email:           varchar("email", { length: 255 }).notNull().unique(),
-  phone:           varchar("phone", { length: 20 }).notNull().unique(),
-  passwordHash:    varchar("password_hash", { length: 255 }).notNull(),
-  role:            userRoleEnum("role").notNull().default("patient"),
-  firstName:       varchar("first_name", { length: 100 }).notNull(),
-  lastName:        varchar("last_name", { length: 100 }).notNull(),
-  isActive:        boolean("is_active").notNull().default(true),
-  isVerified:      boolean("is_verified").notNull().default(false),
-  refreshToken:    text("refresh_token"),
-  createdAt:       timestamp("created_at").notNull().defaultNow(),
-  updatedAt:       timestamp("updated_at").notNull().defaultNow(),
+  id:            uuid("id").primaryKey().defaultRandom(),
+  email:         varchar("email", { length: 255 }).notNull().unique(),
+  phone:         varchar("phone", { length: 20 }).notNull().unique(),
+  passwordHash:  varchar("password_hash", { length: 255 }).notNull(),
+  role:          userRoleEnum("role").notNull().default("patient"),
+  firstName:     varchar("first_name", { length: 100 }).notNull(),
+  lastName:      varchar("last_name", { length: 100 }).notNull(),
+  isActive:      boolean("is_active").notNull().default(true),
+  isVerified:    boolean("is_verified").notNull().default(false),
+  refreshToken:  text("refresh_token"),
+  clerkUserId:   varchar("clerk_user_id", { length: 100 }).unique(),
+  tempPassword:  boolean("temp_password").notNull().default(false),
+  createdAt:     timestamp("created_at").notNull().defaultNow(),
+  updatedAt:     timestamp("updated_at").notNull().defaultNow(),
 });
 
 export const departments = pgTable("departments", {
