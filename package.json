@@ -19,6 +19,7 @@
     "drizzle-orm": "^0.45.2"
   },
   "dependencies": {
+    "@clerk/backend": "^3.18.1",
     "@neondatabase/serverless": "^1.1.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
@@ -27,7 +28,6 @@
     "express": "^4.18.2",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
-    "svix": "^2.5.0",
     "zod": "^3.22.4"
   },
   "devDependencies": {
