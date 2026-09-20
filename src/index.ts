@@ -3,15 +3,15 @@ import cors from "cors";
 import helmet from "helmet";
 import "dotenv/config";
 
-import { authRoutes } from "./routes/auth.routes";
+import { authRoutes }       from "./routes/auth.routes";
 import { departmentRoutes } from "./routes/department.routes";
-import { doctorRoutes } from "./routes/doctor.routes";
-import { appointmentRoutes } from "./routes/appointment.routes";
-import { patientRoutes } from "./routes/patient.routes";
-import { staffRoutes } from "./routes/staff.routes";
-import { billingRoutes } from "./routes/billing.routes";
-import { syncRoutes } from "./routes/sync.routes";
-import { webhookRoutes } from "./routes/webhook.routes";
+import { doctorRoutes }     from "./routes/doctor.routes";
+import { appointmentRoutes }from "./routes/appointment.routes";
+import { patientRoutes }    from "./routes/patient.routes";
+import { staffRoutes }      from "./routes/staff.routes";
+import { billingRoutes }    from "./routes/billing.routes";
+import { syncRoutes }       from "./routes/sync.routes";
+import { webhookRoutes }    from "./routes/webhook.routes";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -21,6 +21,11 @@ app.use(cors({
   origin: process.env.FRONTEND_URL || "http://localhost:3000",
   credentials: true,
 }));
+
+// ── WEBHOOK MUST BE BEFORE express.json() ─────────────────────────────────────
+app.use("/api/webhook", express.raw({ type: "application/json" }), webhookRoutes);
+
+// ── REGULAR MIDDLEWARE ────────────────────────────────────────────────────────
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -36,7 +41,7 @@ app.use("/api/patients",     patientRoutes);
 app.use("/api/staff",        staffRoutes);
 app.use("/api/billing",      billingRoutes);
 app.use("/api/sync",         syncRoutes);
-app.use("/api/webhooks",     webhookRoutes);
+
 app.use((req, res) => {
   res.status(404).json({ success: false, error: "Route not found" });
 });

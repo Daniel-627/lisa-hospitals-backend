@@ -8,9 +8,11 @@ const generatePatientNumber = () =>
 
 export const clerkWebhook = async (req: Request, res: Response) => {
   try {
-    const evt = await verifyWebhook(req as any, {
-      signingSecret: process.env.CLERK_WEBHOOK_SECRET!,
-    });
+    const body = req.body instanceof Buffer ? req.body.toString() : JSON.stringify(req.body);
+const evt = await verifyWebhook(
+  { ...req, body } as any,
+  { signingSecret: process.env.CLERK_WEBHOOK_SECRET! }
+);
 
     const { type, data } = evt;
 
