@@ -1,8 +1,8 @@
-import { Request, Response } from "express";
+import { Response } from "express";
+import { ClerkRequest } from "../middleware/clerk.middleware";
 import { db, patients, users, documents, visits, departments } from "../db";
 import { eq } from "drizzle-orm";
 import { sendSuccess, sendError } from "../utils/response";
-import { AuthRequest } from "../middleware/auth.middleware";
 import { z } from "zod";
 
 const updateSchema = z.object({
@@ -19,8 +19,10 @@ const updateSchema = z.object({
   allergies:         z.string().optional(),
 });
 
-export const getMyProfile = async (req: AuthRequest, res: Response) => {
+export const getMyProfile = async (req: ClerkRequest, res: Response) => {
   try {
+    const userId = req.clerkUser!.dbUserId;
+
     const [patient] = await db
       .select({
         id:                patients.id,
@@ -44,11 +46,10 @@ export const getMyProfile = async (req: AuthRequest, res: Response) => {
       })
       .from(patients)
       .innerJoin(users, eq(patients.userId, users.id))
-      .where(eq(patients.userId, req.user!.id))
+      .where(eq(patients.userId, userId))
       .limit(1);
 
     if (!patient) return sendError(res, "Patient profile not found", 404);
-
     return sendSuccess(res, patient);
   } catch (err) {
     console.error("getMyProfile error:", err);
@@ -56,17 +57,17 @@ export const getMyProfile = async (req: AuthRequest, res: Response) => {
   }
 };
 
-export const updateMyProfile = async (req: AuthRequest, res: Response) => {
+export const updateMyProfile = async (req: ClerkRequest, res: Response) => {
   try {
     const parsed = updateSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return sendError(res, parsed.error.issues[0].message, 422);
-    }
+    if (!parsed.success) return sendError(res, parsed.error.issues[0].message, 422);
+
+    const userId = req.clerkUser!.dbUserId;
 
     const [patient] = await db
       .select()
       .from(patients)
-      .where(eq(patients.userId, req.user!.id))
+      .where(eq(patients.userId, userId))
       .limit(1);
 
     if (!patient) return sendError(res, "Patient profile not found", 404);
@@ -84,12 +85,14 @@ export const updateMyProfile = async (req: AuthRequest, res: Response) => {
   }
 };
 
-export const getMyDocuments = async (req: AuthRequest, res: Response) => {
+export const getMyDocuments = async (req: ClerkRequest, res: Response) => {
   try {
+    const userId = req.clerkUser!.dbUserId;
+
     const [patient] = await db
       .select()
       .from(patients)
-      .where(eq(patients.userId, req.user!.id))
+      .where(eq(patients.userId, userId))
       .limit(1);
 
     if (!patient) return sendError(res, "Patient profile not found", 404);
@@ -106,12 +109,14 @@ export const getMyDocuments = async (req: AuthRequest, res: Response) => {
   }
 };
 
-export const getMyVisits = async (req: AuthRequest, res: Response) => {
+export const getMyVisits = async (req: ClerkRequest, res: Response) => {
   try {
+    const userId = req.clerkUser!.dbUserId;
+
     const [patient] = await db
       .select()
       .from(patients)
-      .where(eq(patients.userId, req.user!.id))
+      .where(eq(patients.userId, userId))
       .limit(1);
 
     if (!patient) return sendError(res, "Patient profile not found", 404);

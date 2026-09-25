@@ -1,8 +1,9 @@
-import { Request, Response } from "express";
-import { db, appointments, patients, doctors, departments } from "../db";
+import { Response } from "express";
+import { db, appointments, patients, departments } from "../db";
 import { eq, and } from "drizzle-orm";
 import { sendSuccess, sendError } from "../utils/response";
 import { AuthRequest } from "../middleware/auth.middleware";
+import { ClerkRequest } from "../middleware/clerk.middleware";
 import { z } from "zod";
 
 const createSchema = z.object({
@@ -13,18 +14,17 @@ const createSchema = z.object({
   reason:          z.string().optional(),
 });
 
-export const createAppointment = async (req: AuthRequest, res: Response) => {
+export const createAppointment = async (req: ClerkRequest, res: Response) => {
   try {
     const parsed = createSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return sendError(res, parsed.error.issues[0].message, 422);
-    }
+    if (!parsed.success) return sendError(res, parsed.error.issues[0].message, 422);
 
-    // Get patient profile
+    const userId = req.clerkUser!.dbUserId;
+
     const [patient] = await db
       .select()
       .from(patients)
-      .where(eq(patients.userId, req.user!.id))
+      .where(eq(patients.userId, userId))
       .limit(1);
 
     if (!patient) return sendError(res, "Patient profile not found", 404);
@@ -47,12 +47,14 @@ export const createAppointment = async (req: AuthRequest, res: Response) => {
   }
 };
 
-export const getMyAppointments = async (req: AuthRequest, res: Response) => {
+export const getMyAppointments = async (req: ClerkRequest, res: Response) => {
   try {
+    const userId = req.clerkUser!.dbUserId;
+
     const [patient] = await db
       .select()
       .from(patients)
-      .where(eq(patients.userId, req.user!.id))
+      .where(eq(patients.userId, userId))
       .limit(1);
 
     if (!patient) return sendError(res, "Patient profile not found", 404);
@@ -81,7 +83,7 @@ export const getMyAppointments = async (req: AuthRequest, res: Response) => {
   }
 };
 
-export const getAppointmentById = async (req: AuthRequest, res: Response) => {
+export const getAppointmentById = async (req: ClerkRequest, res: Response) => {
   try {
     const { id } = req.params;
 
@@ -92,7 +94,6 @@ export const getAppointmentById = async (req: AuthRequest, res: Response) => {
       .limit(1);
 
     if (!appointment) return sendError(res, "Appointment not found", 404);
-
     return sendSuccess(res, appointment);
   } catch (err) {
     console.error("getAppointmentById error:", err);
@@ -100,14 +101,15 @@ export const getAppointmentById = async (req: AuthRequest, res: Response) => {
   }
 };
 
-export const cancelAppointment = async (req: AuthRequest, res: Response) => {
+export const cancelAppointment = async (req: ClerkRequest, res: Response) => {
   try {
     const { id } = req.params;
+    const userId = req.clerkUser!.dbUserId;
 
     const [patient] = await db
       .select()
       .from(patients)
-      .where(eq(patients.userId, req.user!.id))
+      .where(eq(patients.userId, userId))
       .limit(1);
 
     if (!patient) return sendError(res, "Patient profile not found", 404);
@@ -115,17 +117,11 @@ export const cancelAppointment = async (req: AuthRequest, res: Response) => {
     const [appointment] = await db
       .select()
       .from(appointments)
-      .where(and(
-        eq(appointments.id, id),
-        eq(appointments.patientId, patient.id)
-      ))
+      .where(and(eq(appointments.id, id), eq(appointments.patientId, patient.id)))
       .limit(1);
 
     if (!appointment) return sendError(res, "Appointment not found", 404);
-
-    if (appointment.status === "completed") {
-      return sendError(res, "Cannot cancel a completed appointment", 400);
-    }
+    if (appointment.status === "completed") return sendError(res, "Cannot cancel a completed appointment", 400);
 
     const [updated] = await db
       .update(appointments)
@@ -170,9 +166,7 @@ export const updateAppointmentStatus = async (req: AuthRequest, res: Response) =
     const { status } = req.body;
 
     const validStatuses = ["pending", "confirmed", "completed", "cancelled", "no_show"];
-    if (!validStatuses.includes(status)) {
-      return sendError(res, "Invalid status", 422);
-    }
+    if (!validStatuses.includes(status)) return sendError(res, "Invalid status", 422);
 
     const [updated] = await db
       .update(appointments)
@@ -181,7 +175,6 @@ export const updateAppointmentStatus = async (req: AuthRequest, res: Response) =
       .returning();
 
     if (!updated) return sendError(res, "Appointment not found", 404);
-
     return sendSuccess(res, updated, "Status updated");
   } catch (err) {
     console.error("updateAppointmentStatus error:", err);

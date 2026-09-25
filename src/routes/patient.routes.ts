@@ -1,10 +1,10 @@
 import { Router } from "express";
 import { getMyProfile, updateMyProfile, getMyDocuments, getMyVisits } from "../controllers/patient.controller";
-import { authenticate, authorize } from "../middleware/auth.middleware";
+import { authenticateClerk } from "../middleware/clerk.middleware";
 
 export const patientRoutes = Router();
 
-patientRoutes.get("/me",           authenticate, authorize("patient"), getMyProfile);
-patientRoutes.patch("/me",         authenticate, authorize("patient"), updateMyProfile);
-patientRoutes.get("/me/documents", authenticate, authorize("patient"), getMyDocuments);
-patientRoutes.get("/me/visits",    authenticate, authorize("patient"), getMyVisits);
+patientRoutes.get("/me",           authenticateClerk, getMyProfile);
+patientRoutes.patch("/me",         authenticateClerk, updateMyProfile);
+patientRoutes.get("/me/documents", authenticateClerk, getMyDocuments);
+patientRoutes.get("/me/visits",    authenticateClerk, getMyVisits);
