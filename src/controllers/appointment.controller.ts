@@ -2,7 +2,7 @@ import { Response } from "express";
 import { db, appointments, patients, departments } from "../db";
 import { eq, and } from "drizzle-orm";
 import { sendSuccess, sendError } from "../utils/response";
-import { AuthRequest } from "../middleware/auth.middleware";
+import { ClerkRequest as AuthRequest } from "../middleware/clerk.middleware";
 import { ClerkRequest } from "../middleware/clerk.middleware";
 import { z } from "zod";
 
