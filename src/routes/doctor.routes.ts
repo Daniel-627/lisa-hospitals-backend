@@ -3,6 +3,7 @@ import { getAllDoctors, getDoctorById, getDoctorAvailability } from "../controll
 
 export const doctorRoutes = Router();
 
+// Public — no auth needed
 doctorRoutes.get("/",                 getAllDoctors);
 doctorRoutes.get("/:id",              getDoctorById);
 doctorRoutes.get("/:id/availability", getDoctorAvailability);

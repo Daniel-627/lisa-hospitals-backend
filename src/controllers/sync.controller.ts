@@ -2,7 +2,7 @@ import { Request, Response } from "express";
 import { db, syncQueue, appointments, patients, visits, triageRecords, consultations } from "../db";
 import { eq, gt, and } from "drizzle-orm";
 import { sendSuccess, sendError } from "../utils/response";
-import { AuthRequest } from "../middleware/auth.middleware";
+import { ClerkRequest as AuthRequest } from "../middleware/clerk.middleware";
 import { z } from "zod";
 
 const syncItemSchema = z.object({
@@ -34,11 +34,11 @@ export const pushSync = async (req: AuthRequest, res: Response) => {
 
     for (const item of queue) {
       try {
-        await processAction(req.user!.id, item.action, item.payload);
+        await processAction(req.clerkUser!.dbUserId, item.action, item.payload);
 
         // Record in sync_queue
         await db.insert(syncQueue).values({
-          userId:           req.user!.id,
+          userId:           req.clerkUser!.dbUserId,
           deviceId,
           action:           item.action,
           payload:          JSON.stringify(item.payload),
@@ -51,7 +51,7 @@ export const pushSync = async (req: AuthRequest, res: Response) => {
       } catch (err: any) {
         // Record failed item
         await db.insert(syncQueue).values({
-          userId:           req.user!.id,
+          userId:           req.clerkUser!.dbUserId,
           deviceId,
           action:           item.action,
           payload:          JSON.stringify(item.payload),
@@ -179,7 +179,7 @@ export const pullSync = async (req: AuthRequest, res: Response) => {
     const [patient] = await db
       .select()
       .from(patients)
-      .where(eq(patients.userId, req.user!.id))
+      .where(eq(patients.userId, req.clerkUser!.dbUserId))
       .limit(1);
 
     let data: any = {};

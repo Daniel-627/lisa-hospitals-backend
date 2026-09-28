@@ -2,7 +2,7 @@ import { Request, Response } from "express";
 import { db, invoices, invoiceItems, payments, patients, users, staff } from "../db";
 import { eq } from "drizzle-orm";
 import { sendSuccess, sendError } from "../utils/response";
-import { AuthRequest } from "../middleware/auth.middleware";
+import { ClerkRequest as AuthRequest } from "../middleware/clerk.middleware";
 import { z } from "zod";
 
 const invoiceSchema = z.object({
@@ -44,7 +44,7 @@ export const createInvoice = async (req: AuthRequest, res: Response) => {
     const staffRecord = await db
       .select()
       .from(staff)
-      .where(eq(staff.userId, req.user!.id))
+      .where(eq(staff.userId, req.clerkUser!.dbUserId))
       .limit(1);
 
     const generatedBy = staffRecord.length > 0 ? staffRecord[0].id : null;
@@ -158,7 +158,7 @@ export const recordPayment = async (req: AuthRequest, res: Response) => {
     const staffRecord = await db
       .select()
       .from(staff)
-      .where(eq(staff.userId, req.user!.id))
+      .where(eq(staff.userId, req.clerkUser!.dbUserId))
       .limit(1);
 
     const receivedBy = staffRecord.length > 0 ? staffRecord[0].id : null;
@@ -191,7 +191,7 @@ export const getMyInvoices = async (req: AuthRequest, res: Response) => {
     const [patient] = await db
       .select()
       .from(patients)
-      .where(eq(patients.userId, req.user!.id))
+      .where(eq(patients.userId, req.clerkUser!.dbUserId))
       .limit(1);
 
     if (!patient) return sendError(res, "Patient profile not found", 404);

@@ -4,16 +4,23 @@ import { db, users } from "../db";
 import { eq } from "drizzle-orm";
 import { sendError } from "../utils/response";
 
+export type UserRole =
+  | "patient" | "doctor" | "nurse" | "receptionist"
+  | "lab_technician" | "radiographer" | "pharmacist"
+  | "billing_officer" | "admin";
+
 export type ClerkRequest = Request & {
   clerkUser?: {
-    id: string;
-    role: string;
-    email: string;
+    clerkId:  string;
     dbUserId: string;
+    role:     UserRole;
+    email:    string;
+    firstName:string;
+    lastName: string;
   };
 };
 
-export const authenticateClerk = async (
+export const authenticate = async (
   req: ClerkRequest,
   res: Response,
   next: NextFunction
@@ -25,22 +32,21 @@ export const authenticateClerk = async (
       return;
     }
 
-    // Verify with Clerk
-    const { data, errors } = await verifyToken(token, {
-  secretKey: process.env.CLERK_SECRET_KEY!,
-});
+    const { data: payload, errors } = await verifyToken(token, {
+      secretKey: process.env.CLERK_SECRET_KEY!,
+    });
 
-const payload = data as any;
+    if (errors || !payload) {
+      sendError(res, "Invalid token", 401);
+      return;
+    }
 
-if (errors || !payload) {
-  sendError(res, "Invalid token", 401);
-  return;
-}
-    // Find user in our DB by clerk_user_id
+    const clerkId = (payload as any).sub;
+
     const [user] = await db
       .select()
       .from(users)
-      .where(eq(users.clerkUserId, payload.sub))
+      .where(eq(users.clerkUserId, clerkId))
       .limit(1);
 
     if (!user) {
@@ -48,15 +54,32 @@ if (errors || !payload) {
       return;
     }
 
+    if (!user.isActive) {
+      sendError(res, "Account is deactivated", 403);
+      return;
+    }
+
     req.clerkUser = {
-      id:       payload.sub,
-      role:     user.role,
-      email:    user.email,
-      dbUserId: user.id,
+      clerkId,
+      dbUserId:  user.id,
+      role:      user.role as UserRole,
+      email:     user.email,
+      firstName: user.firstName,
+      lastName:  user.lastName,
     };
 
     next();
   } catch {
     sendError(res, "Invalid or expired token", 401);
   }
+};
+
+export const authorize = (...roles: UserRole[]) => {
+  return (req: ClerkRequest, res: Response, next: NextFunction): void => {
+    if (!req.clerkUser || !roles.includes(req.clerkUser.role)) {
+      sendError(res, "Access denied", 403);
+      return;
+    }
+    next();
+  };
 };

@@ -2,7 +2,7 @@ import { Request, Response } from "express";
 import { db, patients, users, appointments, visits, documents, departments } from "../db";
 import { eq, count } from "drizzle-orm";
 import { sendSuccess, sendError } from "../utils/response";
-import { AuthRequest } from "../middleware/auth.middleware";
+import { ClerkRequest as AuthRequest } from "../middleware/clerk.middleware";
 import { z } from "zod";
 
 export const getStaffDashboard = async (req: AuthRequest, res: Response) => {
@@ -157,7 +157,7 @@ export const uploadDocument = async (req: AuthRequest, res: Response) => {
       fileSize:     parsed.data.fileSize,
       mimeType:     parsed.data.mimeType,
       relatedId:    parsed.data.relatedId,
-      uploadedBy:   req.user!.id as any,
+      uploadedBy:   req.clerkUser!.dbUserId as any,
       isVisible:    true,
     }).returning();
 

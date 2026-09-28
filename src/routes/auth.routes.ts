@@ -1,11 +1,8 @@
 import { Router } from "express";
-import { register, login, refresh, logout, me } from "../controllers/auth.controller";
-import { authenticate } from "../middleware/auth.middleware";
+import { getMe, updateRole } from "../controllers/auth.controller";
+import { authenticate, authorize } from "../middleware/clerk.middleware";
 
 export const authRoutes = Router();
 
-authRoutes.post("/register", register);
-authRoutes.post("/login",    login);
-authRoutes.post("/refresh",  refresh);
-authRoutes.post("/logout",   logout);
-authRoutes.get("/me",        authenticate, me);
+authRoutes.get("/me",              authenticate, getMe);
+authRoutes.patch("/role/:userId",  authenticate, authorize("admin"), updateRole);

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { pushSync, pullSync } from "../controllers/sync.controller";
-import { authenticate } from "../middleware/auth.middleware";
+import { authenticate } from "../middleware/clerk.middleware";
 
 export const syncRoutes = Router();
 

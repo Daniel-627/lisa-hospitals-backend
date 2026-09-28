@@ -1,10 +1,13 @@
 import { Router } from "express";
 import { getStaffDashboard, getAllPatients, getPatientById, uploadDocument } from "../controllers/staff.controller";
-import { authenticate, authorize } from "../middleware/auth.middleware";
+import { authenticate, authorize } from "../middleware/clerk.middleware";
 
 export const staffRoutes = Router();
 
-const staffRoles = ["admin", "doctor", "nurse", "receptionist", "lab_technician", "radiographer", "pharmacist", "billing_officer"] as const;
+const staffRoles = [
+  "admin", "doctor", "nurse", "receptionist",
+  "lab_technician", "radiographer", "pharmacist", "billing_officer"
+] as const;
 
 staffRoutes.get("/dashboard",    authenticate, authorize(...staffRoles), getStaffDashboard);
 staffRoutes.get("/patients",     authenticate, authorize(...staffRoles), getAllPatients);
