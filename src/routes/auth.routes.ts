@@ -1,6 +1,7 @@
 import { Router } from "express";
-import { getMe, updateRole } from "../controllers/auth.controller";
+import { getMe, updateRole, completeProfile } from "../controllers/auth.controller";
 import { authenticate, authorize } from "../middleware/clerk.middleware";
+
 
 export const authRoutes = Router();
 
