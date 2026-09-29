@@ -57,3 +57,55 @@ export const updateRole = async (req: ClerkRequest, res: Response) => {
     return sendError(res, "Something went wrong", 500);
   }
 };
+
+export const completeProfile = async (req: ClerkRequest, res: Response) => {
+  try {
+    const { phone, firstName, lastName } = req.body;
+
+    if (!phone) return sendError(res, "Phone number is required", 422);
+
+    const clerkId = req.clerkUser!.clerkId;
+
+    // Check if user exists
+    const [existing] = await db
+      .select()
+      .from(users)
+      .where(eq(users.clerkUserId, clerkId))
+      .limit(1);
+
+    if (existing) {
+      // Update existing user
+      await db.update(users)
+        .set({ phone, firstName, lastName, updatedAt: new Date() })
+        .where(eq(users.clerkUserId, clerkId));
+
+      return sendSuccess(res, null, "Profile updated");
+    }
+
+    // Create new user
+    const [newUser] = await db.insert(users).values({
+      email:        req.clerkUser!.email,
+      phone,
+      firstName,
+      lastName,
+      passwordHash: `clerk-${clerkId}`,
+      role:         "patient",
+      isActive:     true,
+      isVerified:   true,
+      clerkUserId:  clerkId,
+    }).returning();
+
+    // Create patient profile
+    await db.insert(patients).values({
+      userId:        newUser.id,
+      patientNumber: `PT-${Date.now().toString().slice(-6)}`,
+      dateOfBirth:   "2000-01-01",
+      gender:        "other",
+    });
+
+    return sendSuccess(res, null, "Profile created", 201);
+  } catch (err) {
+    console.error("completeProfile error:", err);
+    return sendError(res, "Something went wrong", 500);
+  }
+};

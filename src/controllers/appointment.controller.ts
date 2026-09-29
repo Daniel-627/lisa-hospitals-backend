@@ -14,6 +14,8 @@ const createSchema = z.object({
   reason:          z.string().optional(),
 });
 
+
+
 export const createAppointment = async (req: ClerkRequest, res: Response) => {
   try {
     const parsed = createSchema.safeParse(req.body);
