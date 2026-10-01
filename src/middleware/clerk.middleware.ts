@@ -10,55 +10,61 @@ export type UserRole =
   | "billing_officer" | "admin";
 
 export type ClerkRequest = Request & {
+  /** Set by authenticateClerk and authenticate. */
+  clerkId?: string;
+  /** Set by authenticate only (requires a row in our users table). */
   clerkUser?: {
-    clerkId:  string;
-    dbUserId: string;
-    role:     UserRole;
-    email:    string;
-    firstName:string;
-    lastName: string;
+    clerkId:   string;
+    dbUserId:  string;
+    role:      UserRole;
+    email:     string;
+    firstName: string;
+    lastName:  string;
   };
 };
 
-export const authenticate = async (
-  req: ClerkRequest,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
+/** Verifies the bearer token and returns the Clerk user id, or null. */
+async function verifyBearer(req: Request): Promise<string | null> {
+  const header = req.headers.authorization;
+  if (!header?.startsWith("Bearer ")) return null;
+  const token = header.slice(7).trim();
+  if (!token) return null;
+
+  const { data: payload, errors } = await verifyToken(token, {
+    secretKey: process.env.CLERK_SECRET_KEY!,
+    // Set CLERK_AUTHORIZED_PARTIES="https://your-site.com,http://localhost:3000" to reject tokens from other origins
+    authorizedParties: process.env.CLERK_AUTHORIZED_PARTIES?.split(",").map((s) => s.trim()),
+  });
+  if (errors || !payload) return null;
+  return (payload as any).sub as string;
+}
+
+/**
+ * Token check only — does NOT require a DB user.
+ * Use for POST /auth/complete-profile, which must work before the user exists in our DB.
+ */
+export const authenticateClerk = async (req: ClerkRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const token = req.headers.authorization?.split(" ")[1];
-    if (!token) {
-      sendError(res, "No token provided", 401);
-      return;
-    }
+    const clerkId = await verifyBearer(req);
+    if (!clerkId) { sendError(res, "Invalid or missing token", 401); return; }
+    req.clerkId = clerkId;
+    next();
+  } catch {
+    sendError(res, "Invalid or expired token", 401);
+  }
+};
 
-    const { data: payload, errors } = await verifyToken(token, {
-      secretKey: process.env.CLERK_SECRET_KEY!,
-    });
+export const authenticate = async (req: ClerkRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const clerkId = await verifyBearer(req);
+    if (!clerkId) { sendError(res, "Invalid or missing token", 401); return; }
 
-    if (errors || !payload) {
-      sendError(res, "Invalid token", 401);
-      return;
-    }
+    const [user] = await db.select().from(users).where(eq(users.clerkUserId, clerkId)).limit(1);
 
-    const clerkId = (payload as any).sub;
+    if (!user) { sendError(res, "User not found — please complete registration", 404); return; }
+    if (!user.isActive) { sendError(res, "Account is deactivated", 403); return; }
 
-    const [user] = await db
-      .select()
-      .from(users)
-      .where(eq(users.clerkUserId, clerkId))
-      .limit(1);
-
-    if (!user) {
-      sendError(res, "User not found — please complete registration", 404);
-      return;
-    }
-
-    if (!user.isActive) {
-      sendError(res, "Account is deactivated", 403);
-      return;
-    }
-
+    req.clerkId = clerkId;
     req.clerkUser = {
       clerkId,
       dbUserId:  user.id,
@@ -67,7 +73,6 @@ export const authenticate = async (
       firstName: user.firstName,
       lastName:  user.lastName,
     };
-
     next();
   } catch {
     sendError(res, "Invalid or expired token", 401);
@@ -83,3 +88,9 @@ export const authorize = (...roles: UserRole[]) => {
     next();
   };
 };
+
+/** Any non-patient role. */
+export const requireStaff = authorize(
+  "doctor", "nurse", "receptionist", "lab_technician",
+  "radiographer", "pharmacist", "billing_officer", "admin"
+);

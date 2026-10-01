@@ -1,210 +1,195 @@
-import { Request, Response } from "express";
-import { db, invoices, invoiceItems, payments, patients, users, staff } from "../db";
-import { eq } from "drizzle-orm";
-import { sendSuccess, sendError } from "../utils/response";
-import { ClerkRequest as AuthRequest } from "../middleware/clerk.middleware";
+import { Response } from "express";
 import { z } from "zod";
+import { and, desc, eq } from "drizzle-orm";
+import { db, invoices, invoiceItems, payments, patients } from "../db";
+import { sendSuccess, sendError } from "../utils/response";
+import { ClerkRequest } from "../middleware/clerk.middleware";
+import { HttpError, handleError } from "../utils/errors";
+import { getPatientByUserId, getStaffByUserId, hasRole, isStaff, nextNumber } from "../utils/access";
+import { fromCents, toCents } from "../utils/money";
+import { isUuid, uuid } from "../utils/validation";
+
+const CASHIER_ROLES = ["billing_officer", "receptionist", "admin"] as const;
+const methodEnum = z.enum(["cash", "mpesa", "sha", "maki", "aon", "mtiba", "pesapal"]);
+
+const money = z.number().finite().min(0).max(10_000_000)
+  .refine((v) => Math.abs(v * 100 - Math.round(v * 100)) < 1e-6, "Amounts can have at most 2 decimal places");
 
 const invoiceSchema = z.object({
-  patientId:     z.string().uuid(),
-  visitId:       z.string().uuid().optional(),
-  notes:         z.string().optional(),
-  paymentMethod: z.enum(["cash", "mpesa", "sha", "maki", "aon", "mtiba", "pesapal"]).optional(),
+  patientId:     uuid,
+  visitId:       uuid.optional(),
+  notes:         z.string().max(2000).optional(),
+  paymentMethod: methodEnum.optional(),
   items: z.array(z.object({
-    description: z.string().min(1),
-    quantity:    z.number().min(1),
-    unitPrice:   z.number().min(0),
-  })).min(1),
+    description: z.string().trim().min(1).max(300),
+    quantity:    z.number().int().min(1).max(10_000),
+    unitPrice:   money,
+  })).min(1).max(100),
 });
 
 const paymentSchema = z.object({
-  amount:          z.number().min(1),
-  paymentMethod:   z.enum(["cash", "mpesa", "sha", "maki", "aon", "mtiba", "pesapal"]),
-  referenceNumber: z.string().optional(),
-  notes:           z.string().optional(),
+  amount:          money.refine((v) => v > 0, "Amount must be greater than 0"),
+  paymentMethod:   methodEnum,
+  referenceNumber: z.string().trim().max(100).optional(),
+  notes:           z.string().max(1000).optional(),
 });
 
-const generateInvoiceNumber = () =>
-  `INV-${Date.now().toString().slice(-8)}`;
-
-export const createInvoice = async (req: AuthRequest, res: Response) => {
+export const createInvoice = async (req: ClerkRequest, res: Response) => {
   try {
-    const parsed = invoiceSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return sendError(res, parsed.error.issues[0].message, 422);
-    }
+    if (!hasRole(req, ...CASHIER_ROLES)) return sendError(res, "Access denied", 403);
 
+    const parsed = invoiceSchema.safeParse(req.body);
+    if (!parsed.success) return sendError(res, parsed.error.issues[0].message, 422);
     const { patientId, visitId, notes, paymentMethod, items } = parsed.data;
 
-    const totalAmount = items.reduce(
-      (sum, item) => sum + item.quantity * item.unitPrice, 0
-    );
+    const lines = items.map((i) => {
+      const unit = toCents(i.unitPrice);
+      return { ...i, unit, total: unit * i.quantity };
+    });
+    const totalCents = lines.reduce((s, l) => s + l.total, 0);
+    if (totalCents <= 0) return sendError(res, "Invoice total must be greater than 0", 422);
 
-    // Get staff record if exists
-    const staffRecord = await db
-      .select()
-      .from(staff)
-      .where(eq(staff.userId, req.clerkUser!.dbUserId))
-      .limit(1);
+    const staffRecord = await getStaffByUserId(req.clerkUser!.dbUserId);
 
-    const generatedBy = staffRecord.length > 0 ? staffRecord[0].id : null;
+    const result = await db.transaction(async (tx) => {
+      const [patient] = await tx.select({ id: patients.id }).from(patients).where(eq(patients.id, patientId)).limit(1);
+      if (!patient) throw new HttpError(404, "Patient not found");
 
-    const [invoice] = await db.insert(invoices).values({
-      patientId,
-      visitId,
-      invoiceNumber: generateInvoiceNumber(),
-      totalAmount:   totalAmount.toString(),
-      paidAmount:    "0",
-      paymentStatus: "pending",
-      paymentMethod,
-      generatedBy,
-      notes,
-    }).returning();
+      const [invoice] = await tx.insert(invoices).values({
+        patientId, visitId,
+        invoiceNumber: await nextNumber("INV", "invoice_number_seq", 9, tx),
+        totalAmount: fromCents(totalCents),
+        paidAmount: "0.00",
+        paymentStatus: "pending",
+        paymentMethod,
+        generatedBy: staffRecord?.id ?? null,
+        notes,
+      }).returning();
 
-    const invoiceItemsData = items.map(item => ({
-      invoiceId:   invoice.id,
-      description: item.description,
-      quantity:    item.quantity,
-      unitPrice:   item.unitPrice.toString(),
-      totalPrice:  (item.quantity * item.unitPrice).toString(),
-    }));
+      const created = await tx.insert(invoiceItems).values(lines.map((l) => ({
+        invoiceId: invoice.id,
+        description: l.description,
+        quantity: l.quantity,
+        unitPrice: fromCents(l.unit),
+        totalPrice: fromCents(l.total),
+      }))).returning();
 
-    await db.insert(invoiceItems).values(invoiceItemsData);
+      return { ...invoice, items: created };
+    });
 
-    const itemsCreated = await db
-      .select()
-      .from(invoiceItems)
-      .where(eq(invoiceItems.invoiceId, invoice.id));
-
-    return sendSuccess(res, { ...invoice, items: itemsCreated },
-      "Invoice created successfully", 201);
+    return sendSuccess(res, result, "Invoice created successfully", 201);
   } catch (err) {
-    console.error("createInvoice error:", err);
-    return sendError(res, "Something went wrong", 500);
+    return handleError(res, err, "createInvoice");
   }
 };
 
-export const getInvoiceById = async (req: AuthRequest, res: Response) => {
+export const getInvoiceById = async (req: ClerkRequest, res: Response) => {
   try {
     const { id } = req.params;
+    if (!isUuid(id)) return sendError(res, "Invoice not found", 404);
 
-    const [invoice] = await db
-      .select()
-      .from(invoices)
-      .where(eq(invoices.id, id))
-      .limit(1);
-
+    const [invoice] = await db.select().from(invoices).where(eq(invoices.id, id)).limit(1);
     if (!invoice) return sendError(res, "Invoice not found", 404);
 
-    const items = await db
-      .select()
-      .from(invoiceItems)
-      .where(eq(invoiceItems.invoiceId, id));
-
-    const invoicePayments = await db
-      .select()
-      .from(payments)
-      .where(eq(payments.invoiceId, id));
-
-    return sendSuccess(res, { ...invoice, items, payments: invoicePayments });
-  } catch (err) {
-    console.error("getInvoiceById error:", err);
-    return sendError(res, "Something went wrong", 500);
-  }
-};
-
-export const getPatientInvoices = async (req: AuthRequest, res: Response) => {
-  try {
-    const { id } = req.params;
-
-    const patientInvoices = await db
-      .select()
-      .from(invoices)
-      .where(eq(invoices.patientId, id))
-      .orderBy(invoices.createdAt);
-
-    return sendSuccess(res, patientInvoices);
-  } catch (err) {
-    console.error("getPatientInvoices error:", err);
-    return sendError(res, "Something went wrong", 500);
-  }
-};
-
-export const recordPayment = async (req: AuthRequest, res: Response) => {
-  try {
-    const { id } = req.params;
-
-    const parsed = paymentSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return sendError(res, parsed.error.errors[0].message, 422);
+    if (!isStaff(req)) {
+      const patient = await getPatientByUserId(req.clerkUser!.dbUserId);
+      if (!patient || invoice.patientId !== patient.id) return sendError(res, "Invoice not found", 404);
     }
 
-    const [invoice] = await db
-      .select()
-      .from(invoices)
-      .where(eq(invoices.id, id))
-      .limit(1);
+    const items = await db.select().from(invoiceItems).where(eq(invoiceItems.invoiceId, id));
+    const invoicePayments = await db.select().from(payments).where(eq(payments.invoiceId, id));
+    return sendSuccess(res, { ...invoice, items, payments: invoicePayments });
+  } catch (err) {
+    return handleError(res, err, "getInvoiceById");
+  }
+};
 
-    if (!invoice) return sendError(res, "Invoice not found", 404);
+export const getPatientInvoices = async (req: ClerkRequest, res: Response) => {
+  try {
+    if (!isStaff(req)) return sendError(res, "Access denied", 403);
+    const { id } = req.params;
+    if (!isUuid(id)) return sendError(res, "Patient not found", 404);
 
-    const newPaidAmount = parseFloat(invoice.paidAmount) + parsed.data.amount;
-    const totalAmount   = parseFloat(invoice.totalAmount);
+    const list = await db.select().from(invoices)
+      .where(eq(invoices.patientId, id))
+      .orderBy(desc(invoices.createdAt));
+    return sendSuccess(res, list);
+  } catch (err) {
+    return handleError(res, err, "getPatientInvoices");
+  }
+};
 
-    const paymentStatus =
-      newPaidAmount >= totalAmount ? "paid"    :
-      newPaidAmount > 0            ? "partial" : "pending";
+export const recordPayment = async (req: ClerkRequest, res: Response) => {
+  try {
+    if (!hasRole(req, ...CASHIER_ROLES)) return sendError(res, "Access denied", 403);
 
-    // Get staff record if exists
-    const staffRecord = await db
-      .select()
-      .from(staff)
-      .where(eq(staff.userId, req.clerkUser!.dbUserId))
-      .limit(1);
+    const { id } = req.params;
+    if (!isUuid(id)) return sendError(res, "Invoice not found", 404);
 
-    const receivedBy = staffRecord.length > 0 ? staffRecord[0].id : null;
+    const parsed = paymentSchema.safeParse(req.body);
+    if (!parsed.success) return sendError(res, parsed.error.issues[0].message, 422);
+    const { paymentMethod, referenceNumber, notes } = parsed.data;
+    const amountCents = toCents(parsed.data.amount);
 
-    const [payment] = await db.insert(payments).values({
-      invoiceId:       id,
-      patientId:       invoice.patientId,
-      amount:          parsed.data.amount.toString(),
-      paymentMethod:   parsed.data.paymentMethod,
-      referenceNumber: parsed.data.referenceNumber,
-      receivedBy,
-      notes:           parsed.data.notes,
-    }).returning();
+    const staffRecord = await getStaffByUserId(req.clerkUser!.dbUserId);
 
-    await db.update(invoices).set({
-      paidAmount:    newPaidAmount.toString(),
-      paymentStatus,
-      paymentMethod: parsed.data.paymentMethod,
-    }).where(eq(invoices.id, id));
+    const payment = await db.transaction(async (tx) => {
+      // Row lock: concurrent payments on the same invoice are serialised.
+      const [invoice] = await tx.select().from(invoices).where(eq(invoices.id, id)).for("update");
+      if (!invoice) throw new HttpError(404, "Invoice not found");
+      if (invoice.paymentStatus === "waived") throw new HttpError(409, "This invoice has been waived");
+
+      const totalCents = toCents(invoice.totalAmount);
+      const paidCents = toCents(invoice.paidAmount);
+      const outstanding = totalCents - paidCents;
+
+      if (outstanding <= 0) throw new HttpError(409, "This invoice is already fully paid");
+      if (amountCents > outstanding) {
+        throw new HttpError(422, `Payment exceeds the outstanding balance of KES ${fromCents(outstanding)}`);
+      }
+
+      if (referenceNumber) {
+        const [dup] = await tx.select({ id: payments.id }).from(payments)
+          .where(and(eq(payments.referenceNumber, referenceNumber), eq(payments.paymentMethod, paymentMethod)))
+          .limit(1);
+        if (dup) throw new HttpError(409, "A payment with this reference number was already recorded");
+      }
+
+      const newPaid = paidCents + amountCents;
+      const [created] = await tx.insert(payments).values({
+        invoiceId: id,
+        patientId: invoice.patientId,
+        amount: fromCents(amountCents),
+        paymentMethod, referenceNumber, notes,
+        receivedBy: staffRecord?.id ?? null,
+      }).returning();
+
+      await tx.update(invoices).set({
+        paidAmount: fromCents(newPaid),
+        paymentStatus: newPaid >= totalCents ? "paid" : "partial",
+        paymentMethod,
+        updatedAt: new Date(),
+      }).where(eq(invoices.id, id));
+
+      return created;
+    });
 
     return sendSuccess(res, payment, "Payment recorded successfully", 201);
   } catch (err) {
-    console.error("recordPayment error:", err);
-    return sendError(res, "Something went wrong", 500);
+    return handleError(res, err, "recordPayment");
   }
 };
 
-export const getMyInvoices = async (req: AuthRequest, res: Response) => {
+export const getMyInvoices = async (req: ClerkRequest, res: Response) => {
   try {
-    const [patient] = await db
-      .select()
-      .from(patients)
-      .where(eq(patients.userId, req.clerkUser!.dbUserId))
-      .limit(1);
-
+    const patient = await getPatientByUserId(req.clerkUser!.dbUserId);
     if (!patient) return sendError(res, "Patient profile not found", 404);
 
-    const myInvoices = await db
-      .select()
-      .from(invoices)
+    const mine = await db.select().from(invoices)
       .where(eq(invoices.patientId, patient.id))
-      .orderBy(invoices.createdAt);
-
-    return sendSuccess(res, myInvoices);
+      .orderBy(desc(invoices.createdAt));
+    return sendSuccess(res, mine);
   } catch (err) {
-    console.error("getMyInvoices error:", err);
-    return sendError(res, "Something went wrong", 500);
+    return handleError(res, err, "getMyInvoices");
   }
 };

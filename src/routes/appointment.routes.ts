@@ -7,9 +7,12 @@ import { authenticate, authorize } from "../middleware/clerk.middleware";
 
 export const appointmentRoutes = Router();
 
-appointmentRoutes.post("/",              authenticate, createAppointment);
-appointmentRoutes.get("/mine",           authenticate, getMyAppointments);
-appointmentRoutes.get("/:id",            authenticate, getAppointmentById);
-appointmentRoutes.patch("/:id/cancel",   authenticate, cancelAppointment);
-appointmentRoutes.get("/all",            authenticate, authorize("admin", "receptionist", "doctor", "nurse"), getAllAppointments);
-appointmentRoutes.patch("/:id/status",   authenticate, authorize("admin", "receptionist", "doctor", "nurse"), updateAppointmentStatus);
+const staffRoles = ["admin", "receptionist", "doctor", "nurse"] as const;
+
+appointmentRoutes.post("/",            authenticate, authorize("patient"), createAppointment);
+appointmentRoutes.get("/mine",         authenticate, authorize("patient"), getMyAppointments);
+// "/all" MUST be declared before "/:id", otherwise "/:id" swallows it (it was unreachable before).
+appointmentRoutes.get("/all",          authenticate, authorize(...staffRoles), getAllAppointments);
+appointmentRoutes.get("/:id",          authenticate, getAppointmentById);      // ownership checked in the handler
+appointmentRoutes.patch("/:id/cancel", authenticate, authorize("patient"), cancelAppointment);
+appointmentRoutes.patch("/:id/status", authenticate, authorize(...staffRoles), updateAppointmentStatus);

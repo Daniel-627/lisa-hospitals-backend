@@ -10,8 +10,10 @@ import {
   date,
   time,
   decimal,
+  uniqueIndex,
+  pgSequence,
 } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 
 // ── ENUMS ────────────────────────────────────────────────────────────────────
 
@@ -118,6 +120,13 @@ export const syncStatusEnum = pgEnum("sync_status", [
   "conflict",
 ]);
 
+// ── HUMAN-READABLE NUMBER SEQUENCES ───────────────────────────────────────────
+// Replace Date.now().slice(-N) numbers (which can collide). One digit longer than the old
+// formats, so they never clash with existing rows.
+export const patientNumberSeq = pgSequence("patient_number_seq", { startWith: 1000000 });
+export const invoiceNumberSeq = pgSequence("invoice_number_seq", { startWith: 1 });
+export const visitNumberSeq   = pgSequence("visit_number_seq",   { startWith: 1 });
+
 // ── CORE TABLES ───────────────────────────────────────────────────────────────
 
 export const users = pgTable("users", {
@@ -134,7 +143,7 @@ export const users = pgTable("users", {
   clerkUserId:   varchar("clerk_user_id", { length: 100 }).unique(),
   tempPassword:  boolean("temp_password").notNull().default(false),
   createdAt:     timestamp("created_at").notNull().defaultNow(),
-  updatedAt:     timestamp("updated_at").notNull().defaultNow(),
+  updatedAt:     timestamp("updated_at").notNull().defaultNow().$onUpdate(() => new Date()),
 });
 
 export const departments = pgTable("departments", {
@@ -165,7 +174,7 @@ export const patients = pgTable("patients", {
   insuranceNumber:   varchar("insurance_number", { length: 100 }),
   allergies:         text("allergies"),
   createdAt:         timestamp("created_at").notNull().defaultNow(),
-  updatedAt:         timestamp("updated_at").notNull().defaultNow(),
+  updatedAt:         timestamp("updated_at").notNull().defaultNow().$onUpdate(() => new Date()),
 });
 
 export const staff = pgTable("staff", {
@@ -177,7 +186,7 @@ export const staff = pgTable("staff", {
   employedAt:       date("employed_at").notNull(),
   isOnDuty:         boolean("is_on_duty").notNull().default(false),
   createdAt:        timestamp("created_at").notNull().defaultNow(),
-  updatedAt:        timestamp("updated_at").notNull().defaultNow(),
+  updatedAt:        timestamp("updated_at").notNull().defaultNow().$onUpdate(() => new Date()),
 });
 
 export const doctors = pgTable("doctors", {
@@ -190,7 +199,7 @@ export const doctors = pgTable("doctors", {
   consultationFee:   decimal("consultation_fee", { precision: 10, scale: 2 }),
   isAvailable:       boolean("is_available").notNull().default(true),
   createdAt:         timestamp("created_at").notNull().defaultNow(),
-  updatedAt:         timestamp("updated_at").notNull().defaultNow(),
+  updatedAt:         timestamp("updated_at").notNull().defaultNow().$onUpdate(() => new Date()),
 });
 
 export const doctorAvailability = pgTable("doctor_availability", {
@@ -217,7 +226,7 @@ export const appointments = pgTable("appointments", {
   notes:         text("notes"),
   bookedOnline:  boolean("booked_online").notNull().default(false),
   createdAt:     timestamp("created_at").notNull().defaultNow(),
-  updatedAt:     timestamp("updated_at").notNull().defaultNow(),
+  updatedAt:     timestamp("updated_at").notNull().defaultNow().$onUpdate(() => new Date()),
 });
 
 export const visits = pgTable("visits", {
@@ -258,7 +267,7 @@ export const consultations = pgTable("consultations", {
   followUpDate:   date("follow_up_date"),
   referredTo:     uuid("referred_to").references(() => departments.id),
   createdAt:      timestamp("created_at").notNull().defaultNow(),
-  updatedAt:      timestamp("updated_at").notNull().defaultNow(),
+  updatedAt:      timestamp("updated_at").notNull().defaultNow().$onUpdate(() => new Date()),
 });
 
 export const prescriptions = pgTable("prescriptions", {
@@ -369,7 +378,7 @@ export const invoices = pgTable("invoices", {
   generatedBy:    uuid("generated_by").references(() => staff.id),
   notes:          text("notes"),
   createdAt:      timestamp("created_at").notNull().defaultNow(),
-  updatedAt:      timestamp("updated_at").notNull().defaultNow(),
+  updatedAt:      timestamp("updated_at").notNull().defaultNow().$onUpdate(() => new Date()),
 });
 
 export const invoiceItems = pgTable("invoice_items", {
@@ -433,7 +442,7 @@ export const newsPosts = pgTable("news_posts", {
   isPublished: boolean("is_published").notNull().default(false),
   publishedAt: timestamp("published_at"),
   createdAt:   timestamp("created_at").notNull().defaultNow(),
-  updatedAt:   timestamp("updated_at").notNull().defaultNow(),
+  updatedAt:   timestamp("updated_at").notNull().defaultNow().$onUpdate(() => new Date()),
 });
 
 export const auditLogs = pgTable("audit_logs", {
@@ -517,8 +526,12 @@ export const syncQueue = pgTable("sync_queue", {
   action:      syncActionEnum("action").notNull(),
   payload:     text("payload").notNull(),
   status:      syncStatusEnum("status").notNull().default("pending"),
+  clientId:    varchar("client_id", { length: 100 }), // client-generated id → idempotent retries
   errorMessage:varchar("error_message", { length: 500 }),
   createdOfflineAt: timestamp("created_offline_at").notNull(),
   syncedAt:    timestamp("synced_at"),
   createdAt:   timestamp("created_at").notNull().defaultNow(),
-});
+}, (t) => ({
+  // A given client item can be applied once; failed attempts may be retried freely.
+  syncedOnce: uniqueIndex("sync_queue_synced_uidx").on(t.deviceId, t.clientId).where(sql`${t.status} = 'synced'`),
+}));
