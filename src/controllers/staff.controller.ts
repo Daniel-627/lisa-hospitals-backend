@@ -139,10 +139,18 @@ export const uploadDocument = async (req: ClerkRequest, res: Response) => {
     // documents.uploadedBy references staff.id (NOT users.id). Admins may have no staff row → null.
     const staffRecord = await getStaffByUserId(req.clerkUser!.dbUserId);
 
+    // Fields are listed explicitly (not spread): with "strict": false in tsconfig, zod's inferred
+    // type makes every field optional, which Drizzle's insert type rejects.
     const [doc] = await db.insert(documents).values({
-      ...parsed.data,
-      uploadedBy: staffRecord?.id ?? null,
-      isVisible: true,
+      patientId:    parsed.data.patientId,
+      documentType: parsed.data.documentType,
+      title:        parsed.data.title,
+      fileUrl:      parsed.data.fileUrl,
+      fileSize:     parsed.data.fileSize,
+      mimeType:     parsed.data.mimeType,
+      relatedId:    parsed.data.relatedId,
+      uploadedBy:   staffRecord?.id ?? null,
+      isVisible:    true,
     }).returning();
 
     return sendSuccess(res, doc, "Document uploaded successfully", 201);
