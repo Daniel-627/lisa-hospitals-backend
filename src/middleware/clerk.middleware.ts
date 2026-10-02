@@ -35,7 +35,12 @@ async function verifyBearer(req: Request): Promise<string | null> {
     // Set CLERK_AUTHORIZED_PARTIES="https://your-site.com,http://localhost:3000" to reject tokens from other origins
     authorizedParties: process.env.CLERK_AUTHORIZED_PARTIES?.split(",").map((s) => s.trim()),
   });
-  if (errors || !payload) return null;
+  if (errors || !payload) {
+    // Visible in Render → Logs. Typical reasons: wrong CLERK_SECRET_KEY, key from a different Clerk instance, authorized-party mismatch.
+    const e: any = errors?.[0];
+    console.warn("Clerk token rejected:", e?.reason ?? e?.code ?? "no payload", "-", e?.message ?? "");
+    return null;
+  }
   return (payload as any).sub as string;
 }
 
@@ -49,7 +54,8 @@ export const authenticateClerk = async (req: ClerkRequest, res: Response, next: 
     if (!clerkId) { sendError(res, "Invalid or missing token", 401); return; }
     req.clerkId = clerkId;
     next();
-  } catch {
+  } catch (err) {
+    console.error("authenticateClerk error:", err);
     sendError(res, "Invalid or expired token", 401);
   }
 };
@@ -74,7 +80,8 @@ export const authenticate = async (req: ClerkRequest, res: Response, next: NextF
       lastName:  user.lastName,
     };
     next();
-  } catch {
+  } catch (err) {
+    console.error("authenticate error:", err);
     sendError(res, "Invalid or expired token", 401);
   }
 };
