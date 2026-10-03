@@ -36,11 +36,10 @@ async function verifyBearer(req: Request): Promise<string | null> {
     authorizedParties: process.env.CLERK_AUTHORIZED_PARTIES?.split(",").map((s) => s.trim()),
   });
   if (errors || !payload) {
-    // Visible in Render → Logs. Typical reasons: wrong CLERK_SECRET_KEY, key from a different Clerk instance, authorized-party mismatch.
-    const e: any = errors?.[0];
-    console.warn("Clerk token rejected:", e?.reason ?? e?.code ?? "no payload", "-", e?.message ?? "");
-    return null;
-  }
+  const e: any = errors?.[0];
+  console.warn("Clerk token rejected:", e?.reason ?? e?.code ?? "no payload", "-", e?.message ?? "");
+  return null;
+}
   return (payload as any).sub as string;
 }
 
