@@ -24,7 +24,6 @@ export type ClerkRequest = Request & {
 };
 
 /** Verifies the bearer token and returns the Clerk user id, or null. */
-/** Verifies the bearer token and returns the Clerk user id, or null. */
 async function verifyBearer(req: Request): Promise<string | null> {
   const header = req.headers.authorization;
   if (!header?.startsWith("Bearer ")) return null;
@@ -36,6 +35,7 @@ async function verifyBearer(req: Request): Promise<string | null> {
     // (and throws on failure) or returns { data, errors }. Accept both.
     const result: any = await verifyToken(token, {
       secretKey: process.env.CLERK_SECRET_KEY!,
+      // Set CLERK_AUTHORIZED_PARTIES="https://your-site.com,http://localhost:3000" to reject tokens from other origins
       authorizedParties: process.env.CLERK_AUTHORIZED_PARTIES?.split(",").map((s) => s.trim()),
     });
     const payload = result?.sub ? result : result?.data;
@@ -46,6 +46,7 @@ async function verifyBearer(req: Request): Promise<string | null> {
     }
     return payload.sub as string;
   } catch (err: any) {
+    // Visible in Render → Logs. Typical reasons: wrong CLERK_SECRET_KEY, key from another Clerk app, authorized-party mismatch.
     console.warn("Clerk token rejected:", err?.reason ?? err?.name ?? "error", "-", err?.message ?? "");
     return null;
   }
@@ -63,7 +64,7 @@ export const authenticateClerk = async (req: ClerkRequest, res: Response, next: 
     next();
   } catch (err) {
     console.error("authenticateClerk error:", err);
-    sendError(res, "Invalid or expired token", 401);
+    sendError(res, "Something went wrong while checking your session", 500);
   }
 };
 
@@ -89,7 +90,7 @@ export const authenticate = async (req: ClerkRequest, res: Response, next: NextF
     next();
   } catch (err) {
     console.error("authenticate error:", err);
-    sendError(res, "Invalid or expired token", 401);
+    sendError(res, "Something went wrong while checking your session", 500);
   }
 };
 

@@ -445,6 +445,18 @@ export const newsPosts = pgTable("news_posts", {
   updatedAt:   timestamp("updated_at").notNull().defaultNow().$onUpdate(() => new Date()),
 });
 
+// Messages sent through the public contact form. Admins read them in the admin panel (next phase).
+export const enquiries = pgTable("enquiries", {
+  id:        uuid("id").primaryKey().defaultRandom(),
+  name:      varchar("name", { length: 100 }).notNull(),
+  email:     varchar("email", { length: 255 }).notNull(),
+  phone:     varchar("phone", { length: 20 }),
+  subject:   varchar("subject", { length: 150 }).notNull(),
+  message:   text("message").notNull(),
+  isRead:    boolean("is_read").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const auditLogs = pgTable("audit_logs", {
   id:         uuid("id").primaryKey().defaultRandom(),
   userId:     uuid("user_id").references(() => users.id),
