@@ -24,23 +24,31 @@ export type ClerkRequest = Request & {
 };
 
 /** Verifies the bearer token and returns the Clerk user id, or null. */
+/** Verifies the bearer token and returns the Clerk user id, or null. */
 async function verifyBearer(req: Request): Promise<string | null> {
   const header = req.headers.authorization;
   if (!header?.startsWith("Bearer ")) return null;
   const token = header.slice(7).trim();
   if (!token) return null;
 
-  const { data: payload, errors } = await verifyToken(token, {
-    secretKey: process.env.CLERK_SECRET_KEY!,
-    // Set CLERK_AUTHORIZED_PARTIES="https://your-site.com,http://localhost:3000" to reject tokens from other origins
-    authorizedParties: process.env.CLERK_AUTHORIZED_PARTIES?.split(",").map((s) => s.trim()),
-  });
-  if (errors || !payload) {
-  const e: any = errors?.[0];
-  console.warn("Clerk token rejected:", e?.reason ?? e?.code ?? "no payload", "-", e?.message ?? "");
-  return null;
-}
-  return (payload as any).sub as string;
+  try {
+    // Depending on the @clerk/backend version, verifyToken either returns the payload directly
+    // (and throws on failure) or returns { data, errors }. Accept both.
+    const result: any = await verifyToken(token, {
+      secretKey: process.env.CLERK_SECRET_KEY!,
+      authorizedParties: process.env.CLERK_AUTHORIZED_PARTIES?.split(",").map((s) => s.trim()),
+    });
+    const payload = result?.sub ? result : result?.data;
+    if (!payload?.sub) {
+      const e = result?.errors?.[0];
+      console.warn("Clerk token rejected:", e?.reason ?? e?.code ?? "no payload", "-", e?.message ?? "");
+      return null;
+    }
+    return payload.sub as string;
+  } catch (err: any) {
+    console.warn("Clerk token rejected:", err?.reason ?? err?.name ?? "error", "-", err?.message ?? "");
+    return null;
+  }
 }
 
 /**
