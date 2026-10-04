@@ -14,6 +14,7 @@ import { syncRoutes }       from "./routes/sync.routes";
 import { webhookRoutes }    from "./routes/webhook.routes";
 import { newsRoutes }       from "./routes/news.routes";
 import { contactRoutes }    from "./routes/contact.routes";
+import { adminRoutes }      from "./routes/admin.routes";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -57,6 +58,7 @@ app.use("/api/billing",      billingRoutes);
 app.use("/api/sync",         syncRoutes);
 app.use("/api/news",         newsRoutes);
 app.use("/api/contact",      contactRoutes);
+app.use("/api/admin",        adminRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ success: false, error: "Route not found" });
