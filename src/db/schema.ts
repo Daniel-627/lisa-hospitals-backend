@@ -126,6 +126,7 @@ export const syncStatusEnum = pgEnum("sync_status", [
 export const patientNumberSeq = pgSequence("patient_number_seq", { startWith: 1000000 });
 export const invoiceNumberSeq = pgSequence("invoice_number_seq", { startWith: 1 });
 export const visitNumberSeq   = pgSequence("visit_number_seq",   { startWith: 1 });
+export const staffNumberSeq   = pgSequence("staff_number_seq",   { startWith: 1 });
 
 // ── CORE TABLES ───────────────────────────────────────────────────────────────
 

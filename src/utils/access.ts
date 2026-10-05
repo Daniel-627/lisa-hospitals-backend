@@ -33,7 +33,7 @@ export async function getDoctorByUserId(userId: string, ex: any = db) {
   return (d ?? null) as { id: string; staffId: string; departmentId: string } | null;
 }
 
-type Seq = "patient_number_seq" | "invoice_number_seq" | "visit_number_seq";
+type Seq = "patient_number_seq" | "invoice_number_seq" | "visit_number_seq" | "staff_number_seq";
 
 /** Collision-free human-readable numbers from a DB sequence (see migrations/001). */
 export async function nextNumber(prefix: string, seq: Seq, width: number, ex: any = db) {
