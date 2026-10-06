@@ -9,10 +9,11 @@ export const appointmentRoutes = Router();
 
 const staffRoles = ["admin", "receptionist", "doctor", "nurse"] as const;
 
-appointmentRoutes.post("/",            authenticate, authorize("patient"), createAppointment);
-appointmentRoutes.get("/mine",         authenticate, authorize("patient"), getMyAppointments);
-// "/all" MUST be declared before "/:id", otherwise "/:id" swallows it (it was unreachable before).
+// Own-appointment routes are open to any signed-in user with a patient profile (staff can be patients too).
+appointmentRoutes.post("/",            authenticate, createAppointment);
+appointmentRoutes.get("/mine",         authenticate, getMyAppointments);
+// "/all" MUST be declared before "/:id", otherwise "/:id" swallows it.
 appointmentRoutes.get("/all",          authenticate, authorize(...staffRoles), getAllAppointments);
-appointmentRoutes.get("/:id",          authenticate, getAppointmentById);      // ownership checked in the handler
-appointmentRoutes.patch("/:id/cancel", authenticate, authorize("patient"), cancelAppointment);
+appointmentRoutes.get("/:id",          authenticate, getAppointmentById);      // access checked in the handler
+appointmentRoutes.patch("/:id/cancel", authenticate, cancelAppointment);
 appointmentRoutes.patch("/:id/status", authenticate, authorize(...staffRoles), updateAppointmentStatus);

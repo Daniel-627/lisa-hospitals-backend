@@ -8,6 +8,7 @@ import { handleError } from "../utils/errors";
 import { getPatientByUserId, hasRole } from "../utils/access";
 import { bookAppointment, cancelAppointmentRecord, bookAppointmentSchema } from "../services/appointments.service";
 import { dateStr, isUuid } from "../utils/validation";
+import { appointmentScope, canSeeAppointment } from "../utils/patientAccess";
 
 const STAFF_STATUS_ROLES = ["receptionist", "nurse", "doctor", "admin"] as const;
 
@@ -62,11 +63,16 @@ export const getAppointmentById = async (req: ClerkRequest, res: Response) => {
     const [appointment] = await db.select().from(appointments).where(eq(appointments.id, id)).limit(1);
     if (!appointment) return sendError(res, "Appointment not found", 404);
 
-    if (req.clerkUser!.role === "patient") {
-      const patient = await getPatientByUserId(req.clerkUser!.dbUserId);
-      // 404 (not 403) so IDs can't be probed.
-      if (!patient || appointment.patientId !== patient.id) return sendError(res, "Appointment not found", 404);
-      const { notes, ...safe } = appointment; // internal staff notes are not for patients
+    // 1) Your own appointment (patients, and staff acting as patients): no internal staff notes.
+    const mine = await getPatientByUserId(req.clerkUser!.dbUserId);
+    if (mine && appointment.patientId === mine.id) {
+      const { notes, ...safe } = appointment;
+      return sendSuccess(res, safe);
+    }
+    // 2) Staff: only appointments they have a reason to see. 404 (not 403) so IDs can't be probed.
+    if (!(await canSeeAppointment(req, appointment))) return sendError(res, "Appointment not found", 404);
+    if (["receptionist", "admin"].includes(req.clerkUser!.role)) {
+      const { reason, notes, ...safe } = appointment; // front desk/admin don't need clinical details
       return sendSuccess(res, safe);
     }
     return sendSuccess(res, appointment);
@@ -104,6 +110,11 @@ export const getAllAppointments = async (req: ClerkRequest, res: Response) => {
     if (status.success) conditions.push(eq(appointments.status, status.data));
     if (date.success) conditions.push(eq(appointments.appointmentDate, date.data));
 
+    // Doctors and nurses only see their own / their department's appointments.
+    const scope = await appointmentScope(req);
+    if (scope === null) return sendSuccess(res, []);
+    if (scope) conditions.push(scope);
+
     const all = await db
       .select({
         id: appointments.id,
@@ -132,7 +143,8 @@ export const getAllAppointments = async (req: ClerkRequest, res: Response) => {
       .limit(limit)
       .offset(offset);
 
-    return sendSuccess(res, all);
+    const hideReason = ["receptionist", "admin"].includes(req.clerkUser!.role);
+    return sendSuccess(res, hideReason ? all.map((a) => ({ ...a, reason: null })) : all);
   } catch (err) {
     return handleError(res, err, "getAllAppointments");
   }

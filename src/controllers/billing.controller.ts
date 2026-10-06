@@ -91,10 +91,9 @@ export const getInvoiceById = async (req: ClerkRequest, res: Response) => {
     const [invoice] = await db.select().from(invoices).where(eq(invoices.id, id)).limit(1);
     if (!invoice) return sendError(res, "Invoice not found", 404);
 
-    if (!isStaff(req)) {
-      const patient = await getPatientByUserId(req.clerkUser!.dbUserId);
-      if (!patient || invoice.patientId !== patient.id) return sendError(res, "Invoice not found", 404);
-    }
+    const mine = await getPatientByUserId(req.clerkUser!.dbUserId);
+    const owns = !!mine && invoice.patientId === mine.id;
+    if (!owns && !hasRole(req, ...CASHIER_ROLES)) return sendError(res, "Invoice not found", 404);
 
     const items = await db.select().from(invoiceItems).where(eq(invoiceItems.invoiceId, id));
     const invoicePayments = await db.select().from(payments).where(eq(payments.invoiceId, id));
@@ -106,7 +105,7 @@ export const getInvoiceById = async (req: ClerkRequest, res: Response) => {
 
 export const getPatientInvoices = async (req: ClerkRequest, res: Response) => {
   try {
-    if (!isStaff(req)) return sendError(res, "Access denied", 403);
+    if (!hasRole(req, ...CASHIER_ROLES)) return sendError(res, "Access denied", 403);
     const { id } = req.params;
     if (!isUuid(id)) return sendError(res, "Patient not found", 404);
 

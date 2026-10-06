@@ -4,7 +4,7 @@ import { db, patients, users, documents, visits, departments } from "../db";
 import { sendSuccess, sendError } from "../utils/response";
 import { ClerkRequest } from "../middleware/clerk.middleware";
 import { handleError } from "../utils/errors";
-import { getPatientByUserId } from "../utils/access";
+import { getPatientByUserId, nextNumber } from "../utils/access";
 import { patientProfileUpdateSchema } from "../utils/validation";
 
 export const getMyProfile = async (req: ClerkRequest, res: Response) => {
@@ -89,5 +89,23 @@ export const getMyVisits = async (req: ClerkRequest, res: Response) => {
     return sendSuccess(res, myVisits);
   } catch (err) {
     return handleError(res, err, "getMyVisits");
+  }
+};
+
+// Staff are people too: let any signed-in user create their own patient profile (e.g. a nurse who wants to book with a colleague).
+export const enrollMe = async (req: ClerkRequest, res: Response) => {
+  try {
+    const existing = await getPatientByUserId(req.clerkUser!.dbUserId);
+    if (existing) return sendSuccess(res, { id: existing.id, patientNumber: existing.patientNumber }, "You already have a patient profile");
+
+    const [row] = await db.insert(patients).values({
+      userId: req.clerkUser!.dbUserId,
+      patientNumber: await nextNumber("PT", "patient_number_seq", 7),
+      dateOfBirth: "2000-01-01", // placeholder until they confirm it on the profile page
+      gender: "other",
+    }).returning();
+    return sendSuccess(res, { id: row.id, patientNumber: row.patientNumber }, "Patient profile created", 201);
+  } catch (err) {
+    return handleError(res, err, "enrollMe");
   }
 };

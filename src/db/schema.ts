@@ -458,6 +458,16 @@ export const enquiries = pgTable("enquiries", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// Time-limited emergency access ("break-glass") to a patient a clinician is not otherwise assigned to. Always audited.
+export const accessGrants = pgTable("access_grants", {
+  id:        uuid("id").primaryKey().defaultRandom(),
+  userId:    uuid("user_id").notNull().references(() => users.id),
+  patientId: uuid("patient_id").notNull().references(() => patients.id),
+  reason:    text("reason").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const auditLogs = pgTable("audit_logs", {
   id:         uuid("id").primaryKey().defaultRandom(),
   userId:     uuid("user_id").references(() => users.id),
