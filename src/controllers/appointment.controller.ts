@@ -9,6 +9,7 @@ import { getPatientByUserId, hasRole } from "../utils/access";
 import { bookAppointment, cancelAppointmentRecord, bookAppointmentSchema } from "../services/appointments.service";
 import { dateStr, isUuid } from "../utils/validation";
 import { appointmentScope, canSeeAppointment } from "../utils/patientAccess";
+import { idFirstName, idLastName, idPhone } from "../utils/patientIdentity";
 
 const STAFF_STATUS_ROLES = ["receptionist", "nurse", "doctor", "admin"] as const;
 
@@ -127,14 +128,14 @@ export const getAllAppointments = async (req: ClerkRequest, res: Response) => {
         department: departments.name,
         patientId: patients.id,
         patientNumber: patients.patientNumber,
-        patientFirstName: users.firstName,
-        patientLastName: users.lastName,
-        patientPhone: users.phone,
+        patientFirstName: idFirstName,
+        patientLastName: idLastName,
+        patientPhone: idPhone,
       })
       .from(appointments)
       .innerJoin(departments, eq(appointments.departmentId, departments.id))
       .innerJoin(patients, eq(appointments.patientId, patients.id))
-      .innerJoin(users, eq(patients.userId, users.id))
+      .leftJoin(users, eq(patients.userId, users.id)) // walk-ins have no user account
       .where(conditions.length ? and(...conditions) : undefined)
       // A single day reads best as a schedule (earliest first); otherwise newest first.
       .orderBy(...(date.success

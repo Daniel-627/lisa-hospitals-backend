@@ -161,7 +161,15 @@ export const departments = pgTable("departments", {
 
 export const patients = pgTable("patients", {
   id:                uuid("id").primaryKey().defaultRandom(),
-  userId:            uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  // userId is NULL for walk-in patients who have no online account (registered at reception).
+  userId:            uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
+  // Identity for walk-ins. Linked patients keep their name/phone/email on the users row (coalesced in queries).
+  firstName:         varchar("first_name", { length: 100 }),
+  lastName:          varchar("last_name", { length: 100 }),
+  phone:             varchar("phone", { length: 20 }),
+  email:             varchar("email", { length: 255 }),
+  dobIsEstimated:    boolean("dob_is_estimated").notNull().default(false),
+  registeredBy:      uuid("registered_by").references(() => users.id),
   patientNumber:     varchar("patient_number", { length: 20 }).notNull().unique(),
   dateOfBirth:       date("date_of_birth").notNull(),
   gender:            genderEnum("gender").notNull(),

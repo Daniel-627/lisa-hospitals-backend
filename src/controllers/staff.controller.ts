@@ -1,12 +1,13 @@
 import { Response } from "express";
 import { z } from "zod";
-import { count, desc, eq, ilike, or } from "drizzle-orm";
+import { and, count, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { db, patients, users, appointments, documents, departments, accessGrants } from "../db";
 import { sendSuccess, sendError } from "../utils/response";
 import { ClerkRequest } from "../middleware/clerk.middleware";
 import { handleError, HttpError } from "../utils/errors";
-import { getStaffByUserId, isStaff } from "../utils/access";
-import { isUuid, uuid } from "../utils/validation";
+import { getStaffByUserId, isStaff, nextNumber } from "../utils/access";
+import { dateStr, isUuid, normalizeKenyanPhone, todayEAT, uuid } from "../utils/validation";
+import { idEmail, idFirstName, idLastName, idPhone } from "../utils/patientIdentity";
 import { audit } from "../utils/audit";
 import { BREAK_GLASS_HOURS, BREAK_GLASS_ROLES, resolveAccess } from "../utils/patientAccess";
 
@@ -44,17 +45,21 @@ export const getAllPatients = async (req: ClerkRequest, res: Response) => {
     const q = String(req.query.q ?? "").trim().slice(0, 100);
     const like = `%${q.replace(/[\\%_]/g, "\\$&")}%`;
     const search = q
-      ? or(ilike(users.firstName, like), ilike(users.lastName, like), ilike(patients.patientNumber, like), ilike(users.phone, like))
+      ? or(
+          ilike(idFirstName, like), ilike(idLastName, like), ilike(patients.patientNumber, like), ilike(idPhone, like),
+          ilike(sql`concat(${idFirstName}, ' ', ${idLastName})`, like), // "jane wanjiru"
+        )
       : undefined;
 
     const list = await db
       .select({
         id: patients.id, patientNumber: patients.patientNumber, gender: patients.gender,
         insuranceScheme: patients.insuranceScheme, createdAt: patients.createdAt,
-        firstName: users.firstName, lastName: users.lastName, email: users.email, phone: users.phone,
+        firstName: idFirstName, lastName: idLastName, email: idEmail, phone: idPhone,
+        hasAccount: sql<boolean>`${patients.userId} is not null`,
       })
       .from(patients)
-      .innerJoin(users, eq(patients.userId, users.id))
+      .leftJoin(users, eq(patients.userId, users.id)) // walk-ins have no user account
       .where(search)
       .orderBy(desc(patients.createdAt))
       .limit(limit)
@@ -79,11 +84,12 @@ export const getPatientById = async (req: ClerkRequest, res: Response) => {
         address: patients.address, nextOfKinName: patients.nextOfKinName,
         nextOfKinPhone: patients.nextOfKinPhone, nextOfKinRelation: patients.nextOfKinRelation,
         insuranceScheme: patients.insuranceScheme, insuranceNumber: patients.insuranceNumber,
-        allergies: patients.allergies, createdAt: patients.createdAt,
-        firstName: users.firstName, lastName: users.lastName, email: users.email, phone: users.phone,
+        allergies: patients.allergies, createdAt: patients.createdAt, dobIsEstimated: patients.dobIsEstimated,
+        userId: patients.userId,
+        firstName: idFirstName, lastName: idLastName, email: idEmail, phone: idPhone,
       })
       .from(patients)
-      .innerJoin(users, eq(patients.userId, users.id))
+      .leftJoin(users, eq(patients.userId, users.id))
       .where(eq(patients.id, id))
       .limit(1);
     if (!patient) return sendError(res, "Patient not found", 404);
@@ -111,10 +117,13 @@ export const getPatientById = async (req: ClerkRequest, res: Response) => {
       .where(eq(appointments.patientId, id))
       .orderBy(desc(appointments.appointmentDate));
 
+    const { userId: linkedUserId, ...shown } = patient;
+    const hasAccount = !!linkedUserId;
+
     if (access.level === "basic") {
-      const { allergies, bloodGroup, ...demographics } = patient;
+      const { allergies, bloodGroup, ...demographics } = shown;
       return sendSuccess(res, {
-        ...demographics, accessLevel: "basic", accessReason: access.reason,
+        ...demographics, hasAccount, accessLevel: "basic", accessReason: access.reason,
         appointments: patientAppointments.map((a) => ({ ...a, reason: null })),
         documents: [],
       });
@@ -124,11 +133,168 @@ export const getPatientById = async (req: ClerkRequest, res: Response) => {
     await audit(req, "patient.viewed", "patients", id, null, { via: access.reason });
 
     return sendSuccess(res, {
-      ...patient, accessLevel: "clinical", accessReason: access.reason, accessExpiresAt: access.expiresAt ?? null,
+      ...shown, hasAccount, accessLevel: "clinical", accessReason: access.reason, accessExpiresAt: access.expiresAt ?? null,
       appointments: patientAppointments, documents: patientDocuments,
     });
   } catch (err) {
     return handleError(res, err, "getPatientById");
+  }
+};
+
+// ── Reception: register and edit patients (works for walk-ins with no online account) ──────────────────
+const REGISTER_ROLES = ["receptionist", "nurse", "doctor", "admin"];
+const genderValue = z.enum(["male", "female", "other"]);
+
+const patientFields = {
+  firstName: z.string().trim().min(1).max(100).optional(),
+  lastName: z.string().trim().min(1).max(100).optional(),
+  dateOfBirth: dateStr.optional(),
+  approxAge: z.number().int().min(0).max(120).optional(), // for people who don't know their date of birth
+  gender: genderValue.optional(),
+  phone: z.string().trim().max(30).optional(),
+  email: z.string().trim().email().max(255).optional(),
+  nationalId: z.string().trim().min(5).max(20).optional(),
+  address: z.string().trim().max(500).optional(),
+  nextOfKinName: z.string().trim().max(200).optional(),
+  nextOfKinPhone: z.string().trim().max(20).optional(),
+  nextOfKinRelation: z.string().trim().max(50).optional(),
+  insuranceScheme: z.enum(["cash", "mpesa", "sha", "maki", "aon", "mtiba", "pesapal"]).optional(),
+  insuranceNumber: z.string().trim().max(100).optional(),
+};
+
+const registerSchema = z.object({
+  ...patientFields,
+  gender: genderValue,
+  unidentified: z.boolean().optional(),          // emergency patient who cannot be identified yet
+  confirmNotDuplicate: z.boolean().optional(),   // reception checked the possible matches and this is a new person
+}).strict();
+
+const updatePatientSchema = z.object(patientFields).strict();
+
+/** Turn a date of birth or an approximate age into a stored date. */
+function resolveDob(d: { dateOfBirth?: string; approxAge?: number }): { dob: string; estimated: boolean } | null {
+  const today = todayEAT();
+  if (d.dateOfBirth) {
+    if (d.dateOfBirth > today) throw new HttpError(422, "Date of birth can't be in the future");
+    return { dob: d.dateOfBirth, estimated: false };
+  }
+  if (d.approxAge !== undefined) {
+    const dob = `${Number(today.slice(0, 4)) - d.approxAge}-07-01`; // mid-year: the least wrong guess
+    return { dob: dob > today ? today : dob, estimated: true };
+  }
+  return null;
+}
+
+export const registerPatient = async (req: ClerkRequest, res: Response) => {
+  try {
+    if (!REGISTER_ROLES.includes(req.clerkUser!.role)) return deny(res);
+    const parsed = registerSchema.safeParse(req.body);
+    if (!parsed.success) return sendError(res, parsed.error.issues[0].message, 422);
+    const d = parsed.data;
+
+    const unidentified = !!d.unidentified;
+    if (!unidentified && (!d.firstName || !d.lastName)) return sendError(res, "Enter the patient's first and last name", 422);
+    const dobInfo = resolveDob(d);
+    if (!dobInfo) return sendError(res, "Enter a date of birth or an approximate age", 422);
+
+    let phone: string | undefined;
+    if (d.phone) {
+      const n = normalizeKenyanPhone(d.phone);
+      if (!n) return sendError(res, "Enter a valid Kenyan phone number, or leave it blank", 422);
+      phone = n;
+    }
+    const firstName = unidentified ? "Unknown" : d.firstName!;
+    const lastName = unidentified ? "Patient" : d.lastName!;
+
+    const identity = {
+      id: patients.id, patientNumber: patients.patientNumber, dateOfBirth: patients.dateOfBirth,
+      firstName: idFirstName, lastName: idLastName, phone: idPhone,
+    };
+
+    // Hard duplicate: the same national ID can only belong to one patient.
+    if (d.nationalId) {
+      const [hit] = await db.select(identity).from(patients).leftJoin(users, eq(patients.userId, users.id)).where(eq(patients.nationalId, d.nationalId)).limit(1);
+      if (hit) {
+        return res.status(409).json({ success: false, code: "DUPLICATE_ID", error: "A patient with this national ID is already registered.", matches: [hit] });
+      }
+    }
+    // Soft duplicate: same name + date of birth, or same phone + first name. Reception confirms before we create a second record.
+    if (!unidentified && !d.confirmNotDuplicate) {
+      const first = firstName.toLowerCase(), last = lastName.toLowerCase();
+      const conds = [and(sql`lower(${idFirstName}) = ${first}`, sql`lower(${idLastName}) = ${last}`, eq(patients.dateOfBirth, dobInfo.dob))];
+      if (phone) conds.push(and(sql`${idPhone} = ${phone}`, sql`lower(${idFirstName}) = ${first}`));
+      const matches = await db.select(identity).from(patients).leftJoin(users, eq(patients.userId, users.id)).where(or(...conds)).limit(5);
+      if (matches.length) {
+        return res.status(409).json({ success: false, code: "POSSIBLE_DUPLICATE", error: "This person may already be registered.", matches });
+      }
+    }
+
+    const created = await db.transaction(async (tx) => {
+      const [row] = await tx.insert(patients).values({
+        userId: null,
+        patientNumber: await nextNumber("PT", "patient_number_seq", 7, tx),
+        firstName, lastName, phone, email: d.email,
+        dateOfBirth: dobInfo.dob, dobIsEstimated: dobInfo.estimated,
+        gender: d.gender,
+        nationalId: d.nationalId,
+        address: d.address,
+        nextOfKinName: d.nextOfKinName, nextOfKinPhone: d.nextOfKinPhone, nextOfKinRelation: d.nextOfKinRelation,
+        insuranceScheme: d.insuranceScheme, insuranceNumber: d.insuranceNumber,
+        registeredBy: req.clerkUser!.dbUserId,
+      }).returning({ id: patients.id, patientNumber: patients.patientNumber });
+      return row;
+    });
+
+    await audit(req, "patient.registered", "patients", created.id, null, { patientNumber: created.patientNumber, unidentified });
+    return sendSuccess(res, created, "Patient registered", 201);
+  } catch (err) {
+    return handleError(res, err, "registerPatient");
+  }
+};
+
+export const updatePatient = async (req: ClerkRequest, res: Response) => {
+  try {
+    if (!REGISTER_ROLES.includes(req.clerkUser!.role)) return deny(res);
+    const { id } = req.params;
+    if (!isUuid(id)) return sendError(res, "Patient not found", 404);
+    const parsed = updatePatientSchema.safeParse(req.body);
+    if (!parsed.success) return sendError(res, parsed.error.issues[0].message, 422);
+    const d = parsed.data;
+
+    const [patient] = await db.select({ id: patients.id, userId: patients.userId }).from(patients).where(eq(patients.id, id)).limit(1);
+    if (!patient) return sendError(res, "Patient not found", 404);
+
+    // Clinicians can only edit patients they are treating; front desk and admins can edit any registration.
+    const access = await resolveAccess(req, id);
+    if (access.level === "minimal") return sendError(res, "You are not currently assigned to this patient.", 403);
+
+    if (patient.userId && (d.firstName || d.lastName || d.phone || d.email)) {
+      return sendError(res, "Name, phone and email belong to the patient's online account. The patient can change them there.", 403);
+    }
+
+    const patch: Record<string, any> = {};
+    if (!patient.userId) {
+      if (d.firstName) patch.firstName = d.firstName;
+      if (d.lastName) patch.lastName = d.lastName;
+      if (d.email) patch.email = d.email;
+      if (d.phone) {
+        const n = normalizeKenyanPhone(d.phone);
+        if (!n) return sendError(res, "Enter a valid Kenyan phone number", 422);
+        patch.phone = n;
+      }
+    }
+    const dobInfo = resolveDob(d);
+    if (dobInfo) { patch.dateOfBirth = dobInfo.dob; patch.dobIsEstimated = dobInfo.estimated; }
+    for (const k of ["gender", "nationalId", "address", "nextOfKinName", "nextOfKinPhone", "nextOfKinRelation", "insuranceScheme", "insuranceNumber"] as const) {
+      if (d[k] !== undefined) patch[k] = d[k];
+    }
+    if (Object.keys(patch).length === 0) return sendError(res, "Nothing to update", 422);
+
+    await db.update(patients).set(patch).where(eq(patients.id, id)); // unique violations (national ID) → 409 via handleError
+    await audit(req, "patient.updated", "patients", id, null, { fields: Object.keys(patch) });
+    return sendSuccess(res, { id }, "Patient updated");
+  } catch (err) {
+    return handleError(res, err, "updatePatient");
   }
 };
 
