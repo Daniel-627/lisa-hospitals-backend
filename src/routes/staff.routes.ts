@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { getStaffDashboard, getAllPatients, getPatientById, uploadDocument, requestEmergencyAccess, registerPatient, updatePatient } from "../controllers/staff.controller";
+import { checkIn, getQueue, pickUp, releaseVisit, completeVisit, markLeft } from "../controllers/visit.controller";
 import { authenticate, authorize } from "../middleware/clerk.middleware";
 
 export const staffRoutes = Router();
@@ -16,3 +17,11 @@ staffRoutes.get("/patients/:id",                   authenticate, authorize(...st
 staffRoutes.patch("/patients/:id",                 authenticate, authorize(...staffRoles), updatePatient);
 staffRoutes.post("/patients/:id/emergency-access", authenticate, authorize(...staffRoles), requestEmergencyAccess);
 staffRoutes.post("/documents",                     authenticate, authorize(...staffRoles), uploadDocument);
+
+// Check-in and department queue (role rules are enforced inside the controller)
+staffRoutes.post("/visits",              authenticate, authorize(...staffRoles), checkIn);
+staffRoutes.get("/queue",                authenticate, authorize(...staffRoles), getQueue);
+staffRoutes.post("/visits/:id/pickup",   authenticate, authorize(...staffRoles), pickUp);
+staffRoutes.post("/visits/:id/release",  authenticate, authorize(...staffRoles), releaseVisit);
+staffRoutes.post("/visits/:id/complete", authenticate, authorize(...staffRoles), completeVisit);
+staffRoutes.post("/visits/:id/left",     authenticate, authorize(...staffRoles), markLeft);

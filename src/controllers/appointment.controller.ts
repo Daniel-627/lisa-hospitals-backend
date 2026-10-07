@@ -127,6 +127,7 @@ export const getAllAppointments = async (req: ClerkRequest, res: Response) => {
         createdAt: appointments.createdAt,
         department: departments.name,
         patientId: patients.id,
+        departmentId: appointments.departmentId,
         patientNumber: patients.patientNumber,
         patientFirstName: idFirstName,
         patientLastName: idLastName,

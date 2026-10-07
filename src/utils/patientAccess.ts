@@ -20,7 +20,7 @@ export const BREAK_GLASS_HOURS = 4;
 
 const addDays = (iso: string, n: number) => new Date(Date.parse(`${iso}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 
-async function whoAmI(userId: string, role: string) {
+export async function whoAmI(userId: string, role: string) {
   const doc = role === "doctor" ? await getDoctorByUserId(userId) : null;
   if (doc) return { doctorId: doc.id as string | null, departmentId: doc.departmentId as string | null };
   const st = await getStaffByUserId(userId);

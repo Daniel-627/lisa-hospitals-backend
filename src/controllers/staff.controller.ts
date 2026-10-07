@@ -110,7 +110,7 @@ export const getPatientById = async (req: ClerkRequest, res: Response) => {
     const patientAppointments = await db
       .select({
         id: appointments.id, appointmentDate: appointments.appointmentDate, appointmentTime: appointments.appointmentTime,
-        status: appointments.status, reason: appointments.reason, department: departments.name,
+        status: appointments.status, reason: appointments.reason, department: departments.name, departmentId: appointments.departmentId,
       })
       .from(appointments)
       .innerJoin(departments, eq(appointments.departmentId, departments.id))

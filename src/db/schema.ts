@@ -82,6 +82,9 @@ export const urgencyEnum = pgEnum("urgency_level", [
   "5_non_urgent",
 ]);
 
+// Where a patient is in today's department queue. (Triage adds "in_triage" in the next step.)
+export const visitStatusEnum = pgEnum("visit_status", ["waiting", "in_progress", "completed", "left"]);
+
 export const admissionStatusEnum = pgEnum("admission_status", [
   "admitted",
   "discharged",
@@ -246,8 +249,20 @@ export const visits = pgTable("visits", {
   arrivedAt:     timestamp("arrived_at").notNull().defaultNow(),
   departedAt:    timestamp("departed_at"),
   visitNumber:   varchar("visit_number", { length: 20 }).notNull().unique(),
+  // ── queue (step 2) ──
+  status:           visitStatusEnum("status").notNull().default("waiting"),
+  queueNumber:      integer("queue_number"),                       // 1, 2, 3… per department per day
+  queueDate:        date("queue_date"),                            // the (Nairobi) day the number belongs to
+  isPriority:       boolean("is_priority").notNull().default(false),
+  reason:           varchar("reason", { length: 300 }),             // why they came (clinical staff only)
+  assignedDoctorId: uuid("assigned_doctor_id").references(() => doctors.id),
+  calledAt:         timestamp("called_at"),                        // when a clinician picked them up
+  checkedInBy:      uuid("checked_in_by").references(() => users.id),
   createdAt:     timestamp("created_at").notNull().defaultNow(),
-});
+}, (t) => ({
+  // No two patients can get the same queue number in a department on the same day.
+  queueUnique: uniqueIndex("visits_queue_uidx").on(t.departmentId, t.queueDate, t.queueNumber),
+}));
 
 export const triageRecords = pgTable("triage_records", {
   id:              uuid("id").primaryKey().defaultRandom(),
