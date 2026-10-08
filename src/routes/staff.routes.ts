@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { getStaffDashboard, getAllPatients, getPatientById, uploadDocument, requestEmergencyAccess, registerPatient, updatePatient } from "../controllers/staff.controller";
-import { checkIn, getQueue, pickUp, releaseVisit, completeVisit, markLeft } from "../controllers/visit.controller";
+import { checkIn, getQueue, pickUp, releaseVisit, completeVisit, markLeft, getVisitDetail, startTriage, cancelTriage, recordTriage } from "../controllers/visit.controller";
 import { authenticate, authorize } from "../middleware/clerk.middleware";
 
 export const staffRoutes = Router();
@@ -25,3 +25,9 @@ staffRoutes.post("/visits/:id/pickup",   authenticate, authorize(...staffRoles),
 staffRoutes.post("/visits/:id/release",  authenticate, authorize(...staffRoles), releaseVisit);
 staffRoutes.post("/visits/:id/complete", authenticate, authorize(...staffRoles), completeVisit);
 staffRoutes.post("/visits/:id/left",     authenticate, authorize(...staffRoles), markLeft);
+
+// Triage
+staffRoutes.get("/visits/:id",                  authenticate, authorize(...staffRoles), getVisitDetail);
+staffRoutes.post("/visits/:id/triage/start",    authenticate, authorize(...staffRoles), startTriage);
+staffRoutes.post("/visits/:id/triage/cancel",   authenticate, authorize(...staffRoles), cancelTriage);
+staffRoutes.post("/visits/:id/triage",          authenticate, authorize(...staffRoles), recordTriage);

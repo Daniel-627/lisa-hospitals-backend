@@ -82,8 +82,8 @@ export const urgencyEnum = pgEnum("urgency_level", [
   "5_non_urgent",
 ]);
 
-// Where a patient is in today's department queue. (Triage adds "in_triage" in the next step.)
-export const visitStatusEnum = pgEnum("visit_status", ["waiting", "in_progress", "completed", "left"]);
+// Where a patient is in today's department queue: waiting (for triage) → in_triage → triaged (ready for doctor) → in_progress (with doctor) → completed.
+export const visitStatusEnum = pgEnum("visit_status", ["waiting", "in_triage", "triaged", "in_progress", "completed", "left"]);
 
 export const admissionStatusEnum = pgEnum("admission_status", [
   "admitted",
