@@ -10,6 +10,7 @@ import { dateStr, isUuid, normalizeKenyanPhone, todayEAT, uuid } from "../utils/
 import { idEmail, idFirstName, idLastName, idPhone } from "../utils/patientIdentity";
 import { audit } from "../utils/audit";
 import { BREAK_GLASS_HOURS, BREAK_GLASS_ROLES, resolveAccess } from "../utils/patientAccess";
+import { consultationHistory } from "../utils/consultationHistory";
 
 const deny = (res: Response) => sendError(res, "Access denied", 403);
 
@@ -130,11 +131,12 @@ export const getPatientById = async (req: ClerkRequest, res: Response) => {
     }
 
     const patientDocuments = await db.select().from(documents).where(eq(documents.patientId, id)).orderBy(desc(documents.createdAt));
+    const consultationList = await consultationHistory(id, { limit: 50 });
     await audit(req, "patient.viewed", "patients", id, null, { via: access.reason });
 
     return sendSuccess(res, {
       ...shown, hasAccount, accessLevel: "clinical", accessReason: access.reason, accessExpiresAt: access.expiresAt ?? null,
-      appointments: patientAppointments, documents: patientDocuments,
+      appointments: patientAppointments, documents: patientDocuments, consultations: consultationList,
     });
   } catch (err) {
     return handleError(res, err, "getPatientById");

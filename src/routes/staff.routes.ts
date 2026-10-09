@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { getStaffDashboard, getAllPatients, getPatientById, uploadDocument, requestEmergencyAccess, registerPatient, updatePatient } from "../controllers/staff.controller";
+import { getConsultation, saveConsultation } from "../controllers/consultation.controller";
 import { checkIn, getQueue, pickUp, releaseVisit, completeVisit, markLeft, getVisitDetail, startTriage, cancelTriage, recordTriage } from "../controllers/visit.controller";
 import { authenticate, authorize } from "../middleware/clerk.middleware";
 
@@ -31,3 +32,7 @@ staffRoutes.get("/visits/:id",                  authenticate, authorize(...staff
 staffRoutes.post("/visits/:id/triage/start",    authenticate, authorize(...staffRoles), startTriage);
 staffRoutes.post("/visits/:id/triage/cancel",   authenticate, authorize(...staffRoles), cancelTriage);
 staffRoutes.post("/visits/:id/triage",          authenticate, authorize(...staffRoles), recordTriage);
+
+// Doctor consultation (doctors of the patient's department only; enforced in the controller)
+staffRoutes.get("/visits/:id/consultation", authenticate, authorize(...staffRoles), getConsultation);
+staffRoutes.put("/visits/:id/consultation", authenticate, authorize(...staffRoles), saveConsultation);

@@ -357,3 +357,33 @@ export const recordTriage = async (req: ClerkRequest, res: Response) => {
     return handleError(res, err, "recordTriage");
   }
 };
+
+// Puts a patient in a department's queue inside an existing transaction (used when a doctor refers a patient on).
+// If they are already waiting in that department today, returns that visit instead of creating a second one.
+export async function enqueueVisit(
+  tx: any,
+  p: { patientId: string; departmentId: string; reason?: string; isPriority?: boolean; checkedInBy: string },
+) {
+  const today = todayEAT();
+  const [dept] = await tx.select({ id: departments.id, name: departments.name }).from(departments)
+    .where(and(eq(departments.id, p.departmentId), eq(departments.isActive, true))).limit(1);
+  if (!dept) throw new HttpError(404, "Department not found");
+
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`queue:${dept.id}:${today}`}))`);
+
+  const [open] = await tx.select({ n: visits.queueNumber }).from(visits)
+    .where(and(eq(visits.patientId, p.patientId), eq(visits.departmentId, dept.id), eq(visits.queueDate, today),
+      inArray(visits.status, ["waiting", "in_triage", "triaged", "in_progress"]))).limit(1);
+  if (open) return { existing: true, id: null as string | null, department: dept.name as string, departmentId: dept.id as string, queueNumber: open.n as number };
+
+  const [{ next }] = await tx.select({ next: sql<number>`coalesce(max(${visits.queueNumber}), 0) + 1` }).from(visits)
+    .where(and(eq(visits.departmentId, dept.id), eq(visits.queueDate, today)));
+
+  const [row] = await tx.insert(visits).values({
+    patientId: p.patientId, departmentId: dept.id,
+    visitNumber: await nextNumber("VIS", "visit_number_seq", 9, tx),
+    status: "waiting", queueNumber: Number(next), queueDate: today,
+    isPriority: !!p.isPriority, reason: p.reason, checkedInBy: p.checkedInBy,
+  }).returning({ id: visits.id, queueNumber: visits.queueNumber });
+  return { existing: false, id: row.id as string, department: dept.name as string, departmentId: dept.id as string, queueNumber: row.queueNumber as number };
+}
