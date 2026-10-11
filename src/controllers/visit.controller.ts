@@ -1,6 +1,6 @@
 import { Response } from "express";
 import { z } from "zod";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db, visits, patients, users, departments, doctors, staff, appointments, triageRecords } from "../db";
 import { ClerkRequest } from "../middleware/clerk.middleware";
@@ -16,6 +16,15 @@ const CHECKIN_ROLES = ["receptionist", "nurse", "doctor", "admin"];
 const CLINICAL_ROLES = ["nurse", "doctor"];
 
 const deny = (res: Response) => sendError(res, "Access denied", 403);
+
+// One person can only be in one chair at a time: block a second department calling a patient who is
+// in triage or with a doctor somewhere else (their eye and dental visits are separate visits).
+async function busyElsewhere(patientId: string, visitId: string) {
+  const [hit] = await db.select({ id: visits.id }).from(visits)
+    .where(and(eq(visits.patientId, patientId), ne(visits.id, visitId), eq(visits.queueDate, todayEAT()), inArray(visits.status, ["in_triage", "in_progress"]))).limit(1);
+  return !!hit;
+}
+const BUSY_MESSAGE = "This patient is being seen in another department right now. Try again when they are free.";
 
 // ── Check in ─────────────────────────────────────────────────────────────────
 const checkInSchema = z.object({
@@ -123,8 +132,10 @@ export const getQueue = async (req: ClerkRequest, res: Response) => {
 
     // Doctors and nurses see only their own department. Front desk and admins can see any, or all.
     let departmentId: string | undefined = isUuid(req.query.departmentId) ? String(req.query.departmentId) : undefined;
+    let myDoctorId: string | null = null;
     if (CLINICAL_ROLES.includes(role)) {
       const me = await whoAmI(dbUserId, role);
+      myDoctorId = me.doctorId;
       if (!me.departmentId) return sendSuccess(res, { visits: [], departmentId: null, note: "You are not assigned to a department yet. Ask an admin to set your department." });
       departmentId = me.departmentId;
     }
@@ -161,7 +172,28 @@ export const getQueue = async (req: ClerkRequest, res: Response) => {
       .orderBy(desc(visits.isPriority), sql`${latestUrgency} asc nulls last`, asc(visits.arrivedAt));
 
     // Why they came / their complaint is clinical: front desk and admins never see it.
-    const out = rows.map(({ chiefComplaint, ...r }) => ({ ...r, reason: showReason ? (chiefComplaint ?? r.reason) : null }));
+    // Where else is each patient waiting today? (a patient with an eye AND a dental problem has two visits)
+    const patientIds = Array.from(new Set(rows.map((r) => r.patientId)));
+    const others = patientIds.length
+      ? await db.select({ patientId: visits.patientId, visitId: visits.id, status: visits.status, queueNumber: visits.queueNumber, department: departments.name })
+          .from(visits).innerJoin(departments, eq(visits.departmentId, departments.id))
+          .where(and(eq(visits.queueDate, today), inArray(visits.patientId, patientIds), inArray(visits.status, open as any)))
+      : [];
+
+    // Complaint/reason is clinical. Front desk and admins never see it, and a doctor doesn't see it for a patient
+    // who has been taken on by a different doctor.
+    const canRead = (r: any) => role === "nurse" || (role === "doctor" && (!r.assignedDoctorId || r.assignedDoctorId === myDoctorId));
+    const out = rows.map(({ chiefComplaint, ...r }) => {
+      const o = others.filter((x) => x.patientId === r.patientId && x.visitId !== r.id);
+      return {
+        ...r,
+        reason: canRead(r) ? (chiefComplaint ?? r.reason) : null,
+        // Clinicians only learn "busy elsewhere", not which department. Front desk sees the departments.
+        elsewhere: showReason
+          ? { busy: o.some((x) => x.status === "in_triage" || x.status === "in_progress"), count: o.length }
+          : o.map((x) => ({ department: x.department, status: x.status, queueNumber: x.queueNumber })),
+      };
+    });
     return sendSuccess(res, { visits: out, departmentId: departmentId ?? null });
   } catch (err) {
     return handleError(res, err, "getQueue");
@@ -182,6 +214,7 @@ async function loadVisitForClinician(req: ClerkRequest, id: string) {
 export const pickUp = async (req: ClerkRequest, res: Response) => {
   try {
     const { visit, me } = await loadVisitForClinician(req, req.params.id);
+    if (await busyElsewhere(visit.patientId, visit.id)) return sendError(res, BUSY_MESSAGE, 409);
     const [updated] = await db.update(visits)
       .set({ status: "in_progress", calledAt: new Date(), assignedDoctorId: me.doctorId ?? visit.assignedDoctorId })
       // only if still available: two clinicians can't both take the same patient
@@ -287,6 +320,7 @@ export const getVisitDetail = async (req: ClerkRequest, res: Response) => {
 export const startTriage = async (req: ClerkRequest, res: Response) => {
   try {
     const { visit } = await loadVisitForClinician(req, req.params.id);
+    if (await busyElsewhere(visit.patientId, visit.id)) return sendError(res, BUSY_MESSAGE, 409);
     const [updated] = await db.update(visits).set({ status: "in_triage", calledAt: new Date() })
       .where(and(eq(visits.id, visit.id), eq(visits.status, "waiting"))).returning({ id: visits.id });
     if (!updated) return sendError(res, "This patient is no longer waiting for triage", 409);

@@ -1,7 +1,8 @@
 import { Response } from "express";
 import { z } from "zod";
-import { and, desc, eq, sql } from "drizzle-orm";
-import { db, visits, patients, users, departments, consultations, prescriptions, triageRecords, appointments } from "../db";
+import { and, desc, eq, gt, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
+import { db, visits, patients, users, departments, consultations, prescriptions, triageRecords, appointments, accessGrants, accessRequests } from "../db";
 import { ClerkRequest } from "../middleware/clerk.middleware";
 import { sendSuccess, sendError } from "../utils/response";
 import { HttpError, handleError } from "../utils/errors";
@@ -11,6 +12,7 @@ import { idFirstName, idLastName } from "../utils/patientIdentity";
 import { consultationHistory } from "../utils/consultationHistory";
 import { dateStr, isUuid, todayEAT, uuid } from "../utils/validation";
 import { enqueueVisit } from "./visit.controller";
+import { activeGrant } from "../utils/patientAccess";
 
 /** Only a doctor of the patient's department may open or write the consultation. */
 async function loadForDoctor(req: ClerkRequest, visitId: string) {
@@ -32,6 +34,15 @@ export const getConsultation = async (req: ClerkRequest, res: Response) => {
     // A closed visit can only be reviewed by the doctor who wrote it.
     if (visit.departedAt && (!existing || existing.doctorId !== doctor.id)) return sendError(res, "This visit is closed", 409);
 
+    // Clinical record = the treating doctor, or a doctor they shared it with. Same department is not enough.
+    const grant = await activeGrant(req.clerkUser!.dbUserId, visit.patientId);
+    const isMine = visit.assignedDoctorId === doctor.id || existing?.doctorId === doctor.id;
+    if (!isMine && !grant && visit.assignedDoctorId) {
+      return res.status(403).json({ success: false, code: "WITH_ANOTHER_DOCTOR", error: "This patient is being treated by another doctor. Ask them to share the record with you." });
+    }
+    // Not picked up by anyone yet: a preview (triage and allergies, so you can decide to take them) but no history.
+    const preview = !isMine && !grant;
+
     const [patient] = await db
       .select({
         id: patients.id, patientNumber: patients.patientNumber, gender: patients.gender, dateOfBirth: patients.dateOfBirth,
@@ -42,11 +53,24 @@ export const getConsultation = async (req: ClerkRequest, res: Response) => {
 
     const [triage] = await db.select().from(triageRecords).where(eq(triageRecords.visitId, visit.id)).orderBy(desc(triageRecords.createdAt)).limit(1);
     const meds = existing ? await db.select().from(prescriptions).where(eq(prescriptions.consultationId, existing.id)) : [];
-    const history = await consultationHistory(visit.patientId, { limit: 5, excludeVisitId: visit.id });
+    const history = preview ? [] : await consultationHistory(visit.patientId, { limit: 5, excludeVisitId: visit.id });
 
     const [dept] = await db.select({ name: departments.name }).from(departments).where(eq(departments.id, visit.departmentId)).limit(1);
 
+    // For the treating doctor: who they have shared with, and who is asking.
+    const granteeUser = alias(users, "grantee_user");
+    const requesterUser = alias(users, "requester_user");
+    const shares = isMine ? await db
+      .select({ id: accessGrants.id, expiresAt: accessGrants.expiresAt, firstName: granteeUser.firstName, lastName: granteeUser.lastName })
+      .from(accessGrants).innerJoin(granteeUser, eq(accessGrants.userId, granteeUser.id))
+      .where(and(eq(accessGrants.patientId, visit.patientId), eq(accessGrants.grantedBy, req.clerkUser!.dbUserId), eq(accessGrants.kind, "shared"), gt(accessGrants.expiresAt, new Date()))) : [];
+    const requests = isMine ? await db
+      .select({ id: accessRequests.id, message: accessRequests.message, createdAt: accessRequests.createdAt, firstName: requesterUser.firstName, lastName: requesterUser.lastName })
+      .from(accessRequests).innerJoin(requesterUser, eq(accessRequests.requesterId, requesterUser.id))
+      .where(and(eq(accessRequests.patientId, visit.patientId), eq(accessRequests.primaryUserId, req.clerkUser!.dbUserId), eq(accessRequests.status, "pending"))) : [];
+
     return sendSuccess(res, {
+      preview, shares, requests,
       visit: { id: visit.id, visitNumber: visit.visitNumber, queueNumber: visit.queueNumber, status: visit.status, isPriority: visit.isPriority, reason: visit.reason, department: dept?.name, departmentId: visit.departmentId },
       canEdit: visit.status === "in_progress" && visit.assignedDoctorId === doctor.id,
       patient, triage: triage ?? null,

@@ -489,6 +489,20 @@ export const accessGrants = pgTable("access_grants", {
   reason:    text("reason").notNull(),
   expiresAt: timestamp("expires_at").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  kind:      varchar("kind", { length: 20 }).notNull().default("emergency"), // "emergency" (break-glass) or "shared" (a doctor shared the record)
+  grantedBy: uuid("granted_by").references(() => users.id),                         // the primary doctor, for shared access
+});
+
+// A doctor asking the patient's primary (treating) doctor for access to the record.
+export const accessRequests = pgTable("access_requests", {
+  id:            uuid("id").primaryKey().defaultRandom(),
+  patientId:     uuid("patient_id").notNull().references(() => patients.id),
+  requesterId:   uuid("requester_id").notNull().references(() => users.id),
+  primaryUserId: uuid("primary_user_id").notNull().references(() => users.id),
+  message:       text("message"),
+  status:        varchar("status", { length: 20 }).notNull().default("pending"), // pending | approved | denied
+  decidedAt:     timestamp("decided_at"),
+  createdAt:     timestamp("created_at").notNull().defaultNow(),
 });
 
 export const auditLogs = pgTable("audit_logs", {

@@ -1,7 +1,7 @@
 import { Response } from "express";
 import { z } from "zod";
 import { and, count, desc, eq, ilike, or, sql } from "drizzle-orm";
-import { db, patients, users, appointments, documents, departments, accessGrants } from "../db";
+import { db, patients, users, appointments, documents, departments, accessGrants, accessRequests } from "../db";
 import { sendSuccess, sendError } from "../utils/response";
 import { ClerkRequest } from "../middleware/clerk.middleware";
 import { handleError, HttpError } from "../utils/errors";
@@ -9,7 +9,7 @@ import { getStaffByUserId, isStaff, nextNumber } from "../utils/access";
 import { dateStr, isUuid, normalizeKenyanPhone, todayEAT, uuid } from "../utils/validation";
 import { idEmail, idFirstName, idLastName, idPhone } from "../utils/patientIdentity";
 import { audit } from "../utils/audit";
-import { BREAK_GLASS_HOURS, BREAK_GLASS_ROLES, resolveAccess } from "../utils/patientAccess";
+import { BREAK_GLASS_HOURS, BREAK_GLASS_ROLES, primaryDoctorFor, resolveAccess } from "../utils/patientAccess";
 import { consultationHistory } from "../utils/consultationHistory";
 
 const deny = (res: Response) => sendError(res, "Access denied", 403);
@@ -99,10 +99,20 @@ export const getPatientById = async (req: ClerkRequest, res: Response) => {
 
     // Not this person's patient: identity only, plus the option to request audited emergency access.
     if (access.level === "minimal") {
+      // Tell a doctor who to ask: the record belongs to the treating doctor, who decides whether to share it.
+      const isDoctor = req.clerkUser!.role === "doctor";
+      const primary = isDoctor ? await primaryDoctorFor(id) : null;
+      const [pending] = primary
+        ? await db.select({ id: accessRequests.id }).from(accessRequests)
+            .where(and(eq(accessRequests.patientId, id), eq(accessRequests.requesterId, req.clerkUser!.dbUserId), eq(accessRequests.status, "pending"))).limit(1)
+        : [];
       return res.status(403).json({
         success: false,
         error: "You are not currently assigned to this patient.",
         code: "ACCESS_REQUIRED",
+        primaryDoctor: primary ? { name: `Dr. ${primary.firstName} ${primary.lastName}` } : null,
+        canRequestAccess: isDoctor && !!primary,
+        requestPending: !!pending,
         canRequestEmergencyAccess: BREAK_GLASS_ROLES.includes(req.clerkUser!.role),
         patient: { id: patient.id, firstName: patient.firstName, lastName: patient.lastName, patientNumber: patient.patientNumber },
       });
@@ -120,6 +130,15 @@ export const getPatientById = async (req: ClerkRequest, res: Response) => {
 
     const { userId: linkedUserId, ...shown } = patient;
     const hasAccount = !!linkedUserId;
+
+    // Nurses with the patient in their department: what's needed for triage and care, not the full history.
+    if (access.level === "triage") {
+      return sendSuccess(res, {
+        ...shown, hasAccount, accessLevel: "triage", accessReason: access.reason,
+        appointments: patientAppointments.map((a) => ({ ...a, reason: null })),
+        documents: [],
+      });
+    }
 
     if (access.level === "basic") {
       const { allergies, bloodGroup, ...demographics } = shown;

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { getStaffDashboard, getAllPatients, getPatientById, uploadDocument, requestEmergencyAccess, registerPatient, updatePatient } from "../controllers/staff.controller";
 import { getConsultation, saveConsultation } from "../controllers/consultation.controller";
+import { requestAccess, listAccessRequests, decideAccessRequest, shareRecord, revokeShare } from "../controllers/access.controller";
 import { checkIn, getQueue, pickUp, releaseVisit, completeVisit, markLeft, getVisitDetail, startTriage, cancelTriage, recordTriage } from "../controllers/visit.controller";
 import { authenticate, authorize } from "../middleware/clerk.middleware";
 
@@ -36,3 +37,10 @@ staffRoutes.post("/visits/:id/triage",          authenticate, authorize(...staff
 // Doctor consultation (doctors of the patient's department only; enforced in the controller)
 staffRoutes.get("/visits/:id/consultation", authenticate, authorize(...staffRoles), getConsultation);
 staffRoutes.put("/visits/:id/consultation", authenticate, authorize(...staffRoles), saveConsultation);
+
+// Access to a patient's clinical record is controlled by the treating doctor
+staffRoutes.post("/patients/:id/access-request",  authenticate, authorize(...staffRoles), requestAccess);
+staffRoutes.get("/access-requests",               authenticate, authorize(...staffRoles), listAccessRequests);
+staffRoutes.post("/access-requests/:id/decide",   authenticate, authorize(...staffRoles), decideAccessRequest);
+staffRoutes.post("/patients/:id/share",           authenticate, authorize(...staffRoles), shareRecord);
+staffRoutes.post("/shares/:id/revoke",            authenticate, authorize(...staffRoles), revokeShare);

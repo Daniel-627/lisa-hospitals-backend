@@ -8,7 +8,7 @@ import { handleError } from "../utils/errors";
 import { getPatientByUserId, hasRole } from "../utils/access";
 import { bookAppointment, cancelAppointmentRecord, bookAppointmentSchema } from "../services/appointments.service";
 import { dateStr, isUuid } from "../utils/validation";
-import { appointmentScope, canSeeAppointment } from "../utils/patientAccess";
+import { appointmentScope, canSeeAppointment, whoAmI } from "../utils/patientAccess";
 import { idFirstName, idLastName, idPhone } from "../utils/patientIdentity";
 
 const STAFF_STATUS_ROLES = ["receptionist", "nurse", "doctor", "admin"] as const;
@@ -76,6 +76,13 @@ export const getAppointmentById = async (req: ClerkRequest, res: Response) => {
       const { reason, notes, ...safe } = appointment; // front desk/admin don't need clinical details
       return sendSuccess(res, safe);
     }
+    if (req.clerkUser!.role === "doctor") {
+      const me = await whoAmI(req.clerkUser!.dbUserId, "doctor");
+      if (appointment.doctorId !== me.doctorId) {
+        const { reason, notes, ...safe } = appointment;
+        return sendSuccess(res, safe);
+      }
+    }
     return sendSuccess(res, appointment);
   } catch (err) {
     return handleError(res, err, "getAppointmentById");
@@ -128,6 +135,7 @@ export const getAllAppointments = async (req: ClerkRequest, res: Response) => {
         department: departments.name,
         patientId: patients.id,
         departmentId: appointments.departmentId,
+        doctorId: appointments.doctorId,
         patientNumber: patients.patientNumber,
         patientFirstName: idFirstName,
         patientLastName: idLastName,
@@ -145,8 +153,14 @@ export const getAllAppointments = async (req: ClerkRequest, res: Response) => {
       .limit(limit)
       .offset(offset);
 
-    const hideReason = ["receptionist", "admin"].includes(req.clerkUser!.role);
-    return sendSuccess(res, hideReason ? all.map((a) => ({ ...a, reason: null })) : all);
+    const role = req.clerkUser!.role;
+    if (role === "receptionist" || role === "admin") return sendSuccess(res, all.map((a) => ({ ...a, reason: null })));
+    if (role === "doctor") {
+      // The reason is clinical: a doctor sees it only on appointments booked with them, not a colleague's.
+      const me = await whoAmI(req.clerkUser!.dbUserId, role);
+      return sendSuccess(res, all.map((a) => ({ ...a, reason: a.doctorId && a.doctorId === me.doctorId ? a.reason : null })));
+    }
+    return sendSuccess(res, all);
   } catch (err) {
     return handleError(res, err, "getAllAppointments");
   }
