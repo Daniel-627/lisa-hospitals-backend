@@ -13,9 +13,10 @@ import { consultationHistory } from "../utils/consultationHistory";
 import { dateStr, isUuid, todayEAT, uuid } from "../utils/validation";
 import { enqueueVisit } from "./visit.controller";
 import { activeGrant } from "../utils/patientAccess";
+import { ordersForConsultations } from "../utils/orders";
 
 /** Only a doctor of the patient's department may open or write the consultation. */
-async function loadForDoctor(req: ClerkRequest, visitId: string) {
+export async function loadForDoctor(req: ClerkRequest, visitId: string) {
   if (req.clerkUser!.role !== "doctor") throw new HttpError(403, "Only doctors can use the consultation screen");
   if (!isUuid(visitId)) throw new HttpError(404, "Visit not found");
   const doctor = await getDoctorByUserId(req.clerkUser!.dbUserId);
@@ -53,6 +54,7 @@ export const getConsultation = async (req: ClerkRequest, res: Response) => {
 
     const [triage] = await db.select().from(triageRecords).where(eq(triageRecords.visitId, visit.id)).orderBy(desc(triageRecords.createdAt)).limit(1);
     const meds = existing ? await db.select().from(prescriptions).where(eq(prescriptions.consultationId, existing.id)) : [];
+    const orders = existing && !preview ? await ordersForConsultations([existing.id]) : { lab: [], radiology: [] };
     const history = preview ? [] : await consultationHistory(visit.patientId, { limit: 5, excludeVisitId: visit.id });
 
     const [dept] = await db.select({ name: departments.name }).from(departments).where(eq(departments.id, visit.departmentId)).limit(1);
@@ -70,7 +72,7 @@ export const getConsultation = async (req: ClerkRequest, res: Response) => {
       .where(and(eq(accessRequests.patientId, visit.patientId), eq(accessRequests.primaryUserId, req.clerkUser!.dbUserId), eq(accessRequests.status, "pending"))) : [];
 
     return sendSuccess(res, {
-      preview, shares, requests,
+      preview, shares, requests, orders,
       visit: { id: visit.id, visitNumber: visit.visitNumber, queueNumber: visit.queueNumber, status: visit.status, isPriority: visit.isPriority, reason: visit.reason, department: dept?.name, departmentId: visit.departmentId },
       canEdit: visit.status === "in_progress" && visit.assignedDoctorId === doctor.id,
       patient, triage: triage ?? null,

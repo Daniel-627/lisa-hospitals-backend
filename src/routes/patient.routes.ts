@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { getMyProfile, updateMyProfile, getMyDocuments, getMyVisits, enrollMe } from "../controllers/patient.controller";
+import { getMyAdmissions } from "../controllers/admission.controller";
+import { getMyResults } from "../controllers/orders.controller";
 import { authenticate } from "../middleware/clerk.middleware";
 
 export const patientRoutes = Router();
@@ -10,3 +12,6 @@ patientRoutes.patch("/me",         authenticate, updateMyProfile);
 patientRoutes.get("/me/documents", authenticate, getMyDocuments);
 patientRoutes.get("/me/visits",    authenticate, getMyVisits);
 patientRoutes.post("/me/enroll",   authenticate, enrollMe);
+
+patientRoutes.get("/me/admissions", authenticate, getMyAdmissions);
+patientRoutes.get("/me/results",  authenticate, getMyResults);

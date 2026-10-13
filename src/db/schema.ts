@@ -320,6 +320,8 @@ export const labOrders = pgTable("lab_orders", {
   instructions:   text("instructions"),
   status:         varchar("status", { length: 50 }).notNull().default("pending"),
   createdAt:      timestamp("created_at").notNull().defaultNow(),
+  collectedAt:    timestamp("collected_at"),                 // sample collected by the lab
+  releasedAt:     timestamp("released_at"),                  // the ordering doctor released the result to the patient
 });
 
 export const labResults = pgTable("lab_results", {
@@ -334,6 +336,7 @@ export const labResults = pgTable("lab_results", {
   fileUrl:      varchar("file_url", { length: 500 }),
   notes:        text("notes"),
   processedAt:  timestamp("processed_at").notNull().defaultNow(),
+  analyte:      varchar("analyte", { length: 100 }),        // e.g. "Haemoglobin" (one row per measured value)
 });
 
 export const radiologyOrders = pgTable("radiology_orders", {
@@ -346,6 +349,7 @@ export const radiologyOrders = pgTable("radiology_orders", {
   clinicalInfo:   text("clinical_info"),
   status:         varchar("status", { length: 50 }).notNull().default("pending"),
   createdAt:      timestamp("created_at").notNull().defaultNow(),
+  releasedAt:     timestamp("released_at"),
 });
 
 export const radiologyResults = pgTable("radiology_results", {
@@ -372,7 +376,10 @@ export const admissions = pgTable("admissions", {
   admittedAt:      timestamp("admitted_at").notNull().defaultNow(),
   dischargedAt:    timestamp("discharged_at"),
   createdAt:       timestamp("created_at").notNull().defaultNow(),
-});
+}, (t) => ({
+  // A patient can only be admitted once at a time.
+  oneActive: uniqueIndex("admissions_one_active_uidx").on(t.patientId).where(sql`${t.admissionStatus} = 'admitted'`),
+}));
 
 export const dischargeSummaries = pgTable("discharge_summaries", {
   id:                uuid("id").primaryKey().defaultRandom(),
@@ -386,7 +393,10 @@ export const dischargeSummaries = pgTable("discharge_summaries", {
   followUpDate:      date("follow_up_date"),
   fileUrl:           varchar("file_url", { length: 500 }),
   createdAt:         timestamp("created_at").notNull().defaultNow(),
-});
+}, (t) => ({
+  // One discharge summary per admission.
+  onePerAdmission: uniqueIndex("discharge_summaries_admission_uidx").on(t.admissionId),
+}));
 
 // ── ADMIN & BILLING TABLES ────────────────────────────────────────────────────
 

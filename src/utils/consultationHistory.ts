@@ -1,5 +1,6 @@
 import { desc, eq, inArray, ne, and } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
+import { ordersForConsultations } from "./orders";
 import { db, consultations, prescriptions, visits, departments, doctors, staff, users } from "../db";
 
 const doctorUser = alias(users, "history_doctor_user");
@@ -34,10 +35,14 @@ export async function consultationHistory(patientId: string, opts: { limit?: num
       }).from(prescriptions).where(inArray(prescriptions.consultationId, rows.map((r) => r.id)))
     : [];
 
+  const orders = await ordersForConsultations(rows.map((r) => r.id));
+
   return rows.map((r) => ({
     id: r.id, date: r.createdAt, diagnosis: r.diagnosis, icdCode: r.icdCode, clinicalNotes: r.clinicalNotes,
     treatmentPlan: r.treatmentPlan, followUpDate: r.followUpDate, department: r.department,
     doctor: `Dr. ${r.doctorFirst} ${r.doctorLast}`,
     medicines: meds.filter((m) => m.consultationId === r.id),
+    labs: orders.lab.filter((o) => o.consultationId === r.id),
+    scans: orders.radiology.filter((o) => o.consultationId === r.id),
   }));
 }
