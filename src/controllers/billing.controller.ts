@@ -9,6 +9,7 @@ import { getPatientByUserId, getStaffByUserId, hasRole, isStaff, nextNumber } fr
 import { fromCents, toCents } from "../utils/money";
 import { isUuid, todayEAT, uuid } from "../utils/validation";
 import { audit } from "../utils/audit";
+import { listOnlinePayments } from "./paystack.controller";
 import { idFirstName, idLastName } from "../utils/patientIdentity";
 
 const CASHIER_ROLES = ["billing_officer", "receptionist", "admin"] as const;
@@ -106,7 +107,8 @@ export const getInvoiceById = async (req: ClerkRequest, res: Response) => {
       .from(patients).leftJoin(users, eq(patients.userId, users.id)).where(eq(patients.id, invoice.patientId)).limit(1);
     // Insurance claims are back-office detail: only the billing desk sees them.
     const claims = owns && !hasRole(req, ...CASHIER_ROLES) ? [] : await db.select().from(insuranceClaims).where(eq(insuranceClaims.invoiceId, id)).orderBy(desc(insuranceClaims.submittedAt));
-    return sendSuccess(res, { ...invoice, items, payments: invoicePayments, patient, claims });
+    const online = hasRole(req, ...CASHIER_ROLES) ? await listOnlinePayments(id) : [];
+    return sendSuccess(res, { ...invoice, items, payments: invoicePayments, patient, claims, online });
   } catch (err) {
     return handleError(res, err, "getInvoiceById");
   }
@@ -131,9 +133,9 @@ export const getPatientInvoices = async (req: ClerkRequest, res: Response) => {
  * Applies one payment to an invoice inside a transaction: locks the invoice row (concurrent payments are
  * serialised), checks the balance, inserts the payment and updates paid amount / status.
  */
-async function applyPayment(
+export async function applyPayment(
   tx: any,
-  p: { invoiceId: string; amountCents: number; paymentMethod: z.infer<typeof methodEnum>; referenceNumber?: string; notes?: string; receivedBy: string | null; capToOutstanding?: boolean },
+  p: { invoiceId: string; amountCents: number; paymentMethod: z.infer<typeof methodEnum> | "paystack"; referenceNumber?: string; notes?: string; receivedBy: string | null; capToOutstanding?: boolean },
 ) {
   const [invoice] = await tx.select().from(invoices).where(eq(invoices.id, p.invoiceId)).for("update");
   if (!invoice) throw new HttpError(404, "Invoice not found");

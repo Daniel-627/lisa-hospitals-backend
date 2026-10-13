@@ -3,6 +3,8 @@ import {
   createInvoice, getInvoiceById, getPatientInvoices, recordPayment, getMyInvoices,
   listInvoices, getBillingSummary, suggestCharges, addInvoiceItems, waiveInvoice, createClaim, listClaims, resolveClaim,
 } from "../controllers/billing.controller";
+import { initPayment, verifyPayment } from "../controllers/paystack.controller";
+import { rateLimit } from "../utils/rateLimit";
 import { authenticate, authorize } from "../middleware/clerk.middleware";
 
 export const billingRoutes = Router();
@@ -15,6 +17,8 @@ billingRoutes.get("/summary",       authenticate, authorize(...staffRoles), getB
 billingRoutes.get("/suggest",       authenticate, authorize(...staffRoles), suggestCharges);
 billingRoutes.get("/claims",        authenticate, authorize(...staffRoles), listClaims);
 billingRoutes.post("/claims/:id/resolve", authenticate, authorize(...staffRoles), resolveClaim);
+// Public on purpose (see paystack.controller): the return page checks a payment by its reference.
+billingRoutes.get("/pay/verify", rateLimit({ windowMs: 60 * 1000, max: 30 }), verifyPayment);
 billingRoutes.get("/patient/:id",   authenticate, authorize(...staffRoles), getPatientInvoices);
 
 billingRoutes.get("/",              authenticate, authorize(...staffRoles), listInvoices);
@@ -24,3 +28,4 @@ billingRoutes.post("/:id/payment",  authenticate, authorize(...staffRoles), reco
 billingRoutes.post("/:id/items",    authenticate, authorize(...staffRoles), addInvoiceItems);
 billingRoutes.post("/:id/waive",    authenticate, authorize("admin", "billing_officer"), waiveInvoice);
 billingRoutes.post("/:id/claims",   authenticate, authorize(...staffRoles), createClaim);
+billingRoutes.post("/:id/pay",      authenticate, initPayment);

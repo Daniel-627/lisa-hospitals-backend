@@ -51,6 +51,7 @@ export const paymentMethodEnum = pgEnum("payment_method", [
   "aon",
   "mtiba",
   "pesapal",
+  "paystack",
 ]);
 
 export const paymentStatusEnum = pgEnum("payment_status", [
@@ -435,6 +436,24 @@ export const payments = pgTable("payments", {
   receivedBy:      uuid("received_by").references(() => staff.id),
   notes:           text("notes"),
   paidAt:          timestamp("paid_at").notNull().defaultNow(),
+});
+
+// Card / M-Pesa payments started through Paystack. A row is created when the checkout is initialised and settled
+// (turned into a normal `payments` row on the invoice) once Paystack confirms it, by webhook or by the return page.
+export const onlinePayments = pgTable("online_payments", {
+  id:           uuid("id").primaryKey().defaultRandom(),
+  invoiceId:    uuid("invoice_id").notNull().references(() => invoices.id),
+  patientId:    uuid("patient_id").notNull().references(() => patients.id),
+  reference:    varchar("reference", { length: 100 }).notNull().unique(),
+  amount:       decimal("amount", { precision: 10, scale: 2 }).notNull(),
+  // pending → success | failed | abandoned; "review" = money was received but couldn't be applied in full (staff must act)
+  status:       varchar("status", { length: 20 }).notNull().default("pending"),
+  channel:      varchar("channel", { length: 50 }),
+  initiatedBy:  uuid("initiated_by").references(() => users.id),
+  paymentId:    uuid("payment_id").references(() => payments.id),
+  notes:        text("notes"),
+  createdAt:    timestamp("created_at").notNull().defaultNow(),
+  settledAt:    timestamp("settled_at"),
 });
 
 export const insuranceClaims = pgTable("insurance_claims", {
