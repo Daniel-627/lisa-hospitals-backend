@@ -426,6 +426,20 @@ export const invoiceItems = pgTable("invoice_items", {
   createdAt:   timestamp("created_at").notNull().defaultNow(),
 });
 
+// The hospital's price list: what staff pick from when raising an invoice. Prices are copied onto the invoice line,
+// so changing one here never alters an invoice that already exists.
+export const priceItems = pgTable("price_items", {
+  id:        uuid("id").primaryKey().defaultRandom(),
+  category:  varchar("category", { length: 30 }).notNull(), // consultation | lab | radiology | pharmacy | ward | procedure | other
+  name:      varchar("name", { length: 300 }).notNull(),
+  unitPrice: decimal("unit_price", { precision: 10, scale: 2 }).notNull(),
+  isActive:  boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow().$onUpdate(() => new Date()),
+}, (t) => ({
+  categoryName: uniqueIndex("price_items_category_name_uidx").on(t.category, t.name),
+}));
+
 export const payments = pgTable("payments", {
   id:              uuid("id").primaryKey().defaultRandom(),
   invoiceId:       uuid("invoice_id").notNull().references(() => invoices.id),

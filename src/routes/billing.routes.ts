@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   createInvoice, getInvoiceById, getPatientInvoices, recordPayment, getMyInvoices,
   listInvoices, getBillingSummary, suggestCharges, addInvoiceItems, waiveInvoice, createClaim, listClaims, resolveClaim,
+  listPrices, createPrice, updatePrice,
 } from "../controllers/billing.controller";
 import { initPayment, verifyPayment } from "../controllers/paystack.controller";
 import { rateLimit } from "../utils/rateLimit";
@@ -16,6 +17,9 @@ billingRoutes.get("/mine",          authenticate, getMyInvoices);
 billingRoutes.get("/summary",       authenticate, authorize(...staffRoles), getBillingSummary);
 billingRoutes.get("/suggest",       authenticate, authorize(...staffRoles), suggestCharges);
 billingRoutes.get("/claims",        authenticate, authorize(...staffRoles), listClaims);
+billingRoutes.get("/prices",        authenticate, authorize(...staffRoles), listPrices);
+billingRoutes.post("/prices",       authenticate, authorize("admin", "billing_officer"), createPrice);
+billingRoutes.patch("/prices/:id",  authenticate, authorize("admin", "billing_officer"), updatePrice);
 billingRoutes.post("/claims/:id/resolve", authenticate, authorize(...staffRoles), resolveClaim);
 // Public on purpose (see paystack.controller): the return page checks a payment by its reference.
 billingRoutes.get("/pay/verify", rateLimit({ windowMs: 60 * 1000, max: 30 }), verifyPayment);

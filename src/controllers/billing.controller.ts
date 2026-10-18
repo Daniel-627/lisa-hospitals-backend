@@ -1,7 +1,7 @@
 import { Response } from "express";
 import { z } from "zod";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
-import { db, invoices, invoiceItems, payments, patients, users, insuranceClaims, doctors, visits } from "../db";
+import { db, invoices, invoiceItems, payments, patients, users, insuranceClaims, doctors, visits, priceItems } from "../db";
 import { sendSuccess, sendError } from "../utils/response";
 import { ClerkRequest } from "../middleware/clerk.middleware";
 import { HttpError, handleError } from "../utils/errors";
@@ -290,6 +290,74 @@ export const suggestCharges = async (req: ClerkRequest, res: Response) => {
     return sendSuccess(res, { visitId: visit.id, patientId: visit.patientId, visitNumber: visit.visitNumber, items });
   } catch (err) {
     return handleError(res, err, "suggestCharges");
+  }
+};
+
+// ── Price list ───────────────────────────────────────────────────────────────
+const PRICE_CATEGORIES = ["consultation", "lab", "radiology", "pharmacy", "ward", "procedure", "other"] as const;
+
+export const listPrices = async (req: ClerkRequest, res: Response) => {
+  try {
+    if (!hasRole(req, ...CASHIER_ROLES)) return sendError(res, "Access denied", 403);
+    const q = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 100) : "";
+    const category = typeof req.query.category === "string" ? req.query.category : "";
+    const all = req.query.all === "true" && hasRole(req, "admin", "billing_officer"); // managers also see switched-off items
+    const conds = [];
+    if (!all) conds.push(eq(priceItems.isActive, true));
+    if (q) conds.push(ilike(priceItems.name, `%${q.replace(/[%_\\]/g, "\\$&")}%`));
+    if ((PRICE_CATEGORIES as readonly string[]).includes(category)) conds.push(eq(priceItems.category, category));
+    const rows = await db.select().from(priceItems).where(conds.length ? and(...conds) : undefined)
+      .orderBy(priceItems.category, priceItems.name).limit(500);
+    return sendSuccess(res, rows);
+  } catch (err) {
+    return handleError(res, err, "listPrices");
+  }
+};
+
+const priceSchema = z.object({
+  category:  z.enum(PRICE_CATEGORIES),
+  name:      z.string().trim().min(1).max(300),
+  unitPrice: money,
+}).strict();
+
+export const createPrice = async (req: ClerkRequest, res: Response) => {
+  try {
+    if (!hasRole(req, "admin", "billing_officer")) return sendError(res, "Access denied", 403);
+    const parsed = priceSchema.safeParse(req.body);
+    if (!parsed.success) return sendError(res, parsed.error.issues[0].message, 422);
+    const d = parsed.data;
+    const [row] = await db.insert(priceItems).values({ category: d.category, name: d.name, unitPrice: fromCents(toCents(d.unitPrice)) })
+      .onConflictDoNothing().returning();
+    if (!row) return sendError(res, "That item is already in the price list", 409);
+    await audit(req, "price.created", "price_items", row.id, null, { name: row.name, unitPrice: row.unitPrice });
+    return sendSuccess(res, row, "Added to the price list", 201);
+  } catch (err) {
+    return handleError(res, err, "createPrice");
+  }
+};
+
+const priceUpdateSchema = z.object({
+  unitPrice: money.optional(),
+  isActive:  z.boolean().optional(),
+}).strict().refine((v) => v.unitPrice !== undefined || v.isActive !== undefined, "Nothing to change");
+
+export const updatePrice = async (req: ClerkRequest, res: Response) => {
+  try {
+    if (!hasRole(req, "admin", "billing_officer")) return sendError(res, "Access denied", 403);
+    const { id } = req.params;
+    if (!isUuid(id)) return sendError(res, "Price not found", 404);
+    const parsed = priceUpdateSchema.safeParse(req.body);
+    if (!parsed.success) return sendError(res, parsed.error.issues[0].message, 422);
+    const patch: Record<string, unknown> = {};
+    if (parsed.data.unitPrice !== undefined) patch.unitPrice = fromCents(toCents(parsed.data.unitPrice));
+    if (parsed.data.isActive !== undefined) patch.isActive = parsed.data.isActive;
+    const [before] = await db.select().from(priceItems).where(eq(priceItems.id, id)).limit(1);
+    if (!before) return sendError(res, "Price not found", 404);
+    const [row] = await db.update(priceItems).set(patch).where(eq(priceItems.id, id)).returning();
+    await audit(req, "price.updated", "price_items", id, { unitPrice: before.unitPrice, isActive: before.isActive }, { unitPrice: row.unitPrice, isActive: row.isActive });
+    return sendSuccess(res, row);
+  } catch (err) {
+    return handleError(res, err, "updatePrice");
   }
 };
 
