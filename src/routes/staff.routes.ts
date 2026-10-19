@@ -5,6 +5,7 @@ import { placeOrders, cancelOrder, releaseOrder, myOrders, labWorklist, labColle
 import { requestAccess, listAccessRequests, decideAccessRequest, shareRecord, revokeShare } from "../controllers/access.controller";
 import { checkIn, getQueue, pickUp, releaseVisit, completeVisit, markLeft, getVisitDetail, startTriage, cancelTriage, recordTriage } from "../controllers/visit.controller";
 import { admitPatient, listAdmissions, getAdmission, updateAdmissionBed, dischargePatient } from "../controllers/admission.controller";
+import { getCatalog } from "../controllers/billing.controller";
 import { authenticate, authorize } from "../middleware/clerk.middleware";
 
 export const staffRoutes = Router();
@@ -14,6 +15,7 @@ const staffRoles = [
   "lab_technician", "radiographer", "pharmacist", "billing_officer"
 ] as const;
 
+staffRoutes.get("/catalog",                        authenticate, authorize(...staffRoles), getCatalog);
 staffRoutes.get("/dashboard",                      authenticate, authorize(...staffRoles), getStaffDashboard);
 staffRoutes.get("/patients",                       authenticate, authorize(...staffRoles), getAllPatients);
 staffRoutes.post("/patients",                      authenticate, authorize(...staffRoles), registerPatient);

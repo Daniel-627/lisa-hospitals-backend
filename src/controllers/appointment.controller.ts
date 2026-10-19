@@ -158,7 +158,7 @@ export const getAllAppointments = async (req: ClerkRequest, res: Response) => {
     if (role === "doctor") {
       // The reason is clinical: a doctor sees it only on appointments booked with them, not a colleague's.
       const me = await whoAmI(req.clerkUser!.dbUserId, role);
-      return sendSuccess(res, all.map((a) => ({ ...a, reason: a.doctorId && a.doctorId === me.doctorId ? a.reason : null })));
+      return sendSuccess(res, all.map(({ patientPhone, ...a }) => ({ ...a, reason: a.doctorId && a.doctorId === me.doctorId ? a.reason : null })));
     }
     return sendSuccess(res, all);
   } catch (err) {

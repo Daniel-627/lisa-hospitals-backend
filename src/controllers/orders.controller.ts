@@ -13,6 +13,7 @@ import { getDoctorByUserId, getStaffByUserId } from "../utils/access";
 import { audit } from "../utils/audit";
 import { idFirstName, idLastName } from "../utils/patientIdentity";
 import { ordersForConsultations } from "../utils/orders";
+import { autoBill } from "../utils/autoBilling";
 import { isUuid } from "../utils/validation";
 import { loadForDoctor } from "./consultation.controller";
 
@@ -75,6 +76,7 @@ export const placeOrders = async (req: ClerkRequest, res: Response) => {
     });
 
     await audit(req, "orders.placed", "visits", visit.id, null, { patientId: visit.patientId, ...made });
+    await autoBill(visit.id); // the tests go straight onto the visit's invoice
     return sendSuccess(res, made, "Orders sent", 201);
   } catch (err) {
     return handleError(res, err, "placeOrders");
@@ -91,8 +93,10 @@ export const cancelOrder = async (req: ClerkRequest, res: Response) => {
     if (!doctor) return sendError(res, "Access denied", 403);
     const t: any = k.table;
     const [updated] = await db.update(t).set({ status: "cancelled" })
-      .where(and(eq(t.id, req.params.id), eq(t.orderedBy, doctor.id), eq(t.status, "pending"))).returning({ id: t.id });
+      .where(and(eq(t.id, req.params.id), eq(t.orderedBy, doctor.id), eq(t.status, "pending"))).returning({ id: t.id, consultationId: t.consultationId });
     if (!updated) return sendError(res, "Only your own orders that haven't been started can be cancelled", 409);
+    const [c] = await db.select({ visitId: consultations.visitId }).from(consultations).where(eq(consultations.id, updated.consultationId)).limit(1);
+    await autoBill(c?.visitId); // a cancelled test comes off the invoice
     await audit(req, "orders.cancelled", req.params.kind === "lab" ? "lab_orders" : "radiology_orders", req.params.id, null, null);
     return sendSuccess(res, { id: req.params.id }, "Order cancelled");
   } catch (err) {

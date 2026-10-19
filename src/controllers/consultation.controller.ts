@@ -14,6 +14,7 @@ import { dateStr, isUuid, todayEAT, uuid } from "../utils/validation";
 import { enqueueVisit } from "./visit.controller";
 import { activeGrant } from "../utils/patientAccess";
 import { ordersForConsultations } from "../utils/orders";
+import { autoBill } from "../utils/autoBilling";
 
 /** Only a doctor of the patient's department may open or write the consultation. */
 export async function loadForDoctor(req: ClerkRequest, visitId: string) {
@@ -158,6 +159,7 @@ export const saveConsultation = async (req: ClerkRequest, res: Response) => {
 
     await audit(req, complete ? "consultation.completed" : "consultation.saved", "consultations", result.consultationId, null,
       { visitId: visit.id, patientId: visit.patientId, medicines: d.prescriptions.length, referred: !!d.referredTo && complete });
+    await autoBill(visit.id); // consultation fee and prescribed medicines go straight onto the visit's invoice
     return sendSuccess(res, { ...result, completed: complete }, complete ? "Visit completed" : "Saved");
   } catch (err) {
     return handleError(res, err, "saveConsultation");

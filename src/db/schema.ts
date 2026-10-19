@@ -377,9 +377,17 @@ export const admissions = pgTable("admissions", {
   admittedAt:      timestamp("admitted_at").notNull().defaultNow(),
   dischargedAt:    timestamp("discharged_at"),
   createdAt:       timestamp("created_at").notNull().defaultNow(),
+  // Bed charges run in segments: moving to a different ward closes the current segment (billed at the old ward's rate)
+  // and starts a new one. A null start means the segment began at admission.
+  bedSegment:       integer("bed_segment").notNull().default(1),
+  segmentStartedAt: timestamp("segment_started_at"),
 }, (t) => ({
   // A patient can only be admitted once at a time.
   oneActive: uniqueIndex("admissions_one_active_uidx").on(t.patientId).where(sql`${t.admissionStatus} = 'admitted'`),
+  // And a bed holds one patient at a time.
+  oneBedOneBed: uniqueIndex("admissions_one_patient_per_bed_uidx")
+    .on(sql`lower(${t.ward})`, sql`lower(${t.bedNumber})`)
+    .where(sql`${t.admissionStatus} = 'admitted' and ${t.bedNumber} is not null`),
 }));
 
 export const dischargeSummaries = pgTable("discharge_summaries", {
@@ -424,7 +432,13 @@ export const invoiceItems = pgTable("invoice_items", {
   unitPrice:   decimal("unit_price", { precision: 10, scale: 2 }).notNull(),
   totalPrice:  decimal("total_price", { precision: 10, scale: 2 }).notNull(),
   createdAt:   timestamp("created_at").notNull().defaultNow(),
-});
+  // Automatic charges: which clinical record this line was raised for (e.g. "lab:<order id>"). One line per record, ever.
+  sourceKey:   varchar("source_key", { length: 100 }),
+  // The record had no matching price. The line sits at 0 until the billing desk prices it.
+  needsPrice:  boolean("needs_price").notNull().default(false),
+}, (t) => ({
+  sourceOnce: uniqueIndex("invoice_items_source_key_uidx").on(t.sourceKey).where(sql`${t.sourceKey} is not null`),
+}));
 
 // The hospital's price list: what staff pick from when raising an invoice. Prices are copied onto the invoice line,
 // so changing one here never alters an invoice that already exists.
@@ -450,7 +464,12 @@ export const payments = pgTable("payments", {
   receivedBy:      uuid("received_by").references(() => staff.id),
   notes:           text("notes"),
   paidAt:          timestamp("paid_at").notNull().defaultNow(),
-});
+  // Sent by the billing screen with every payment it records, so a double click or a retry after a bad network
+  // can never record the same payment twice.
+  idempotencyKey:  varchar("idempotency_key", { length: 100 }),
+}, (t) => ({
+  idemOnce: uniqueIndex("payments_idempotency_key_uidx").on(t.idempotencyKey).where(sql`${t.idempotencyKey} is not null`),
+}));
 
 // Card / M-Pesa payments started through Paystack. A row is created when the checkout is initialised and settled
 // (turned into a normal `payments` row on the invoice) once Paystack confirms it, by webhook or by the return page.

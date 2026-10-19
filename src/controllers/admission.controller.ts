@@ -5,7 +5,8 @@ import { alias } from "drizzle-orm/pg-core";
 import { db, admissions, dischargeSummaries, visits, patients, users, departments, doctors, staff, consultations, invoices } from "../db";
 import { ClerkRequest } from "../middleware/clerk.middleware";
 import { sendSuccess, sendError } from "../utils/response";
-import { HttpError, handleError } from "../utils/errors";
+import { HttpError, handleError, isUniqueViolation } from "../utils/errors";
+import { autoBill } from "../utils/autoBilling";
 import { getDoctorByUserId, getPatientByUserId, isStaff } from "../utils/access";
 import { audit } from "../utils/audit";
 import { idFirstName, idLastName } from "../utils/patientIdentity";
@@ -70,8 +71,11 @@ export const admitPatient = async (req: ClerkRequest, res: Response) => {
     });
 
     await audit(req, "admission.created", "admissions", admission.id, null, { patientId: admission.patientId, ward: admission.ward, bed: admission.bedNumber });
+    await autoBill(admission.visitId); // the first ward day goes onto the invoice
     return sendSuccess(res, admission, "Patient admitted", 201);
   } catch (err) {
+    // Two uniques can fire here: one active admission per patient (checked above) and one patient per bed.
+    if (isUniqueViolation(err)) return sendError(res, "That bed is already taken by another patient. Choose a free bed.", 409);
     return handleError(res, err, "admitPatient");
   }
 };
@@ -207,14 +211,23 @@ export const updateAdmissionBed = async (req: ClerkRequest, res: Response) => {
     const [a] = await db.select().from(admissions).where(eq(admissions.id, id)).limit(1);
     if (!a || !(await canSeeAdmission(req, a))) return sendError(res, "Admission not found", 404);
 
+    // Moving to a different ward changes the daily rate: bill the days spent in the old ward first, then start a new segment.
+    const movedWard = a.ward?.trim().toLowerCase() !== parsed.data.ward.trim().toLowerCase();
+    if (movedWard) await autoBill(a.visitId);
+
     const [updated] = await db.update(admissions)
-      .set({ ward: parsed.data.ward, bedNumber: parsed.data.bedNumber || null })
+      .set({
+        ward: parsed.data.ward, bedNumber: parsed.data.bedNumber || null,
+        ...(movedWard ? { bedSegment: sql`${admissions.bedSegment} + 1`, segmentStartedAt: new Date() } : {}),
+      })
       .where(and(eq(admissions.id, id), eq(admissions.admissionStatus, "admitted"))).returning();
     if (!updated) return sendError(res, "This patient is no longer admitted", 409);
+    await autoBill(a.visitId);
 
     await audit(req, "admission.bed_changed", "admissions", id, { ward: a.ward, bed: a.bedNumber }, { ward: updated.ward, bed: updated.bedNumber });
     return sendSuccess(res, updated, "Bed updated");
   } catch (err) {
+    if (isUniqueViolation(err)) return sendError(res, "That bed is already taken by another patient. Choose a free bed.", 409);
     return handleError(res, err, "updateAdmissionBed");
   }
 };
@@ -275,6 +288,14 @@ export const dischargePatient = async (req: ClerkRequest, res: Response) => {
     });
 
     await audit(req, "admission.discharged", "admissions", id, null, { patientId: result.patientId, condition: d.conditionOnDischarge });
+    // Final ward days go onto the invoice, then report what is owed (the figure from before the discharge is out of date).
+    const billed = await autoBill(result.visitId);
+    if (billed) {
+      const [{ owed, n }] = await db.select({ owed: sql<string>`coalesce(sum(${invoices.totalAmount} - ${invoices.paidAmount}), 0)`, n: sql<number>`count(*)` })
+        .from(invoices).where(and(eq(invoices.visitId, result.visitId), sql`${invoices.paymentStatus} <> 'waived'`));
+      result.outstanding = owed;
+      result.invoiceCount = Number(n);
+    }
     return sendSuccess(res, result, "Patient discharged", 201);
   } catch (err) {
     return handleError(res, err, "dischargePatient");

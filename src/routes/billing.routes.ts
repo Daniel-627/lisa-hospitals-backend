@@ -2,7 +2,7 @@ import { Router } from "express";
 import {
   createInvoice, getInvoiceById, getPatientInvoices, recordPayment, getMyInvoices,
   listInvoices, getBillingSummary, suggestCharges, addInvoiceItems, waiveInvoice, createClaim, listClaims, resolveClaim,
-  listPrices, createPrice, updatePrice,
+  listPrices, createPrice, updatePrice, refreshVisitCharges, priceInvoiceLine,
 } from "../controllers/billing.controller";
 import { initPayment, verifyPayment } from "../controllers/paystack.controller";
 import { rateLimit } from "../utils/rateLimit";
@@ -32,4 +32,6 @@ billingRoutes.post("/:id/payment",  authenticate, authorize(...staffRoles), reco
 billingRoutes.post("/:id/items",    authenticate, authorize(...staffRoles), addInvoiceItems);
 billingRoutes.post("/:id/waive",    authenticate, authorize("admin", "billing_officer"), waiveInvoice);
 billingRoutes.post("/:id/claims",   authenticate, authorize(...staffRoles), createClaim);
+billingRoutes.post("/visits/:visitId/sync", authenticate, authorize(...staffRoles), refreshVisitCharges);
+billingRoutes.patch("/:id/items/:itemId", authenticate, authorize("admin", "billing_officer"), priceInvoiceLine);
 billingRoutes.post("/:id/pay",      authenticate, initPayment);

@@ -45,9 +45,11 @@ export const getAllPatients = async (req: ClerkRequest, res: Response) => {
 
     const q = String(req.query.q ?? "").trim().slice(0, 100);
     const like = `%${q.replace(/[\\%_]/g, "\\$&")}%`;
+    const doctor = isDoctor(req);
     const search = q
       ? or(
-          ilike(idFirstName, like), ilike(idLastName, like), ilike(patients.patientNumber, like), ilike(idPhone, like),
+          ilike(idFirstName, like), ilike(idLastName, like), ilike(patients.patientNumber, like),
+          ...(doctor ? [] : [ilike(idPhone, like)]), // a doctor can't find people by phone number
           ilike(sql`concat(${idFirstName}, ' ', ${idLastName})`, like), // "jane wanjiru"
         )
       : undefined;
@@ -66,7 +68,7 @@ export const getAllPatients = async (req: ClerkRequest, res: Response) => {
       .limit(limit)
       .offset(offset);
 
-    return sendSuccess(res, list);
+    return sendSuccess(res, doctor ? list.map(({ phone, email, insuranceScheme, ...rest }) => rest) : list);
   } catch (err) {
     return handleError(res, err, "getAllPatients");
   }
@@ -128,8 +130,12 @@ export const getPatientById = async (req: ClerkRequest, res: Response) => {
       .where(eq(appointments.patientId, id))
       .orderBy(desc(appointments.appointmentDate));
 
-    const { userId: linkedUserId, ...shown } = patient;
+    const { userId: linkedUserId, ...full } = patient;
     const hasAccount = !!linkedUserId;
+    // Doctors get the medical record only: no phone, email, national ID, address, insurance or next of kin.
+    const shown = isDoctor(req)
+      ? (({ email, phone, nationalId, address, nextOfKinName, nextOfKinPhone, nextOfKinRelation, insuranceScheme, insuranceNumber, ...keep }) => keep)(full)
+      : full;
 
     // Nurses with the patient in their department: what's needed for triage and care, not the full history.
     if (access.level === "triage") {
@@ -163,7 +169,10 @@ export const getPatientById = async (req: ClerkRequest, res: Response) => {
 };
 
 // ── Reception: register and edit patients (works for walk-ins with no online account) ──────────────────
-const REGISTER_ROLES = ["receptionist", "nurse", "doctor", "admin"];
+// Only the front desk and admins register or edit a patient's profile (patients do their own online). Clinicians work on the medical record.
+const REGISTER_ROLES = ["receptionist", "admin"];
+// Doctors see the medical record, not the patient's contact, ID, insurance or next-of-kin details.
+const isDoctor = (req: ClerkRequest) => req.clerkUser!.role === "doctor";
 const genderValue = z.enum(["male", "female", "other"]);
 
 const patientFields = {

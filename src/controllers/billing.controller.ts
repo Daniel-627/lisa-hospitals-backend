@@ -1,7 +1,7 @@
 import { Response } from "express";
 import { z } from "zod";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
-import { db, invoices, invoiceItems, payments, patients, users, insuranceClaims, doctors, visits, priceItems } from "../db";
+import { db, invoices, invoiceItems, payments, patients, users, insuranceClaims, doctors, visits, priceItems, admissions } from "../db";
 import { sendSuccess, sendError } from "../utils/response";
 import { ClerkRequest } from "../middleware/clerk.middleware";
 import { HttpError, handleError } from "../utils/errors";
@@ -11,6 +11,7 @@ import { isUuid, todayEAT, uuid } from "../utils/validation";
 import { audit } from "../utils/audit";
 import { listOnlinePayments } from "./paystack.controller";
 import { idFirstName, idLastName } from "../utils/patientIdentity";
+import { autoBill, recalcInvoice, syncVisitCharges } from "../utils/autoBilling";
 
 const CASHIER_ROLES = ["billing_officer", "receptionist", "admin"] as const;
 const methodEnum = z.enum(["cash", "mpesa", "sha", "maki", "aon", "mtiba", "pesapal"]);
@@ -92,14 +93,24 @@ export const getInvoiceById = async (req: ClerkRequest, res: Response) => {
     const { id } = req.params;
     if (!isUuid(id)) return sendError(res, "Invoice not found", 404);
 
-    const [invoice] = await db.select().from(invoices).where(eq(invoices.id, id)).limit(1);
+    let [invoice] = await db.select().from(invoices).where(eq(invoices.id, id)).limit(1);
     if (!invoice) return sendError(res, "Invoice not found", 404);
 
     const mine = await getPatientByUserId(req.clerkUser!.dbUserId);
     const owns = !!mine && invoice.patientId === mine.id;
     if (!owns && !hasRole(req, ...CASHIER_ROLES)) return sendError(res, "Invoice not found", 404);
 
-    const items = await db.select().from(invoiceItems).where(eq(invoiceItems.invoiceId, id));
+    // Charges that build up on their own (ward days) or wait for a price: bring them up to date before showing the invoice.
+    if (invoice.visitId && invoice.paymentStatus !== "waived") {
+      const [stay] = await db.select({ id: admissions.id }).from(admissions).where(and(eq(admissions.visitId, invoice.visitId), eq(admissions.admissionStatus, "admitted"))).limit(1);
+      const [open] = stay ? [stay] : await db.select({ id: invoiceItems.id }).from(invoiceItems).where(and(eq(invoiceItems.invoiceId, id), eq(invoiceItems.needsPrice, true))).limit(1);
+      if (open) {
+        await autoBill(invoice.visitId);
+        [invoice] = await db.select().from(invoices).where(eq(invoices.id, id)).limit(1);
+      }
+    }
+
+    const items = await db.select().from(invoiceItems).where(eq(invoiceItems.invoiceId, id)).orderBy(invoiceItems.createdAt);
     const invoicePayments = await db.select().from(payments).where(eq(payments.invoiceId, id)).orderBy(payments.paidAt);
 
     const [patient] = await db
@@ -108,7 +119,7 @@ export const getInvoiceById = async (req: ClerkRequest, res: Response) => {
     // Insurance claims are back-office detail: only the billing desk sees them.
     const claims = owns && !hasRole(req, ...CASHIER_ROLES) ? [] : await db.select().from(insuranceClaims).where(eq(insuranceClaims.invoiceId, id)).orderBy(desc(insuranceClaims.submittedAt));
     const online = hasRole(req, ...CASHIER_ROLES) ? await listOnlinePayments(id) : [];
-    return sendSuccess(res, { ...invoice, items, payments: invoicePayments, patient, claims, online });
+    return sendSuccess(res, { ...invoice, items, needsPriceCount: items.filter((i) => i.needsPrice).length, payments: invoicePayments, patient, claims, online });
   } catch (err) {
     return handleError(res, err, "getInvoiceById");
   }
@@ -135,10 +146,20 @@ export const getPatientInvoices = async (req: ClerkRequest, res: Response) => {
  */
 export async function applyPayment(
   tx: any,
-  p: { invoiceId: string; amountCents: number; paymentMethod: z.infer<typeof methodEnum> | "paystack"; referenceNumber?: string; notes?: string; receivedBy: string | null; capToOutstanding?: boolean },
+  p: { invoiceId: string; amountCents: number; paymentMethod: z.infer<typeof methodEnum> | "paystack"; referenceNumber?: string; notes?: string; receivedBy: string | null; capToOutstanding?: boolean; idempotencyKey?: string },
 ) {
   const [invoice] = await tx.select().from(invoices).where(eq(invoices.id, p.invoiceId)).for("update");
   if (!invoice) throw new HttpError(404, "Invoice not found");
+
+  // Same key again = the same payment being sent twice (double click, retry after a dropped connection): hand back the
+  // payment already recorded instead of recording it again. Checked under the invoice lock, so two simultaneous sends are serialised.
+  if (p.idempotencyKey) {
+    const [prior] = await tx.select().from(payments).where(eq(payments.idempotencyKey, p.idempotencyKey)).limit(1);
+    if (prior) {
+      if (prior.invoiceId !== p.invoiceId || toCents(prior.amount) !== p.amountCents) throw new HttpError(409, "That payment key was already used for a different payment. Reload the page and try again.");
+      return { ...prior, replayed: true };
+    }
+  }
   if (invoice.paymentStatus === "waived") throw new HttpError(409, "This invoice has been waived");
 
   const totalCents = toCents(invoice.totalAmount);
@@ -165,7 +186,7 @@ export async function applyPayment(
     patientId: invoice.patientId,
     amount: fromCents(amountCents),
     paymentMethod: p.paymentMethod, referenceNumber: p.referenceNumber, notes: p.notes,
-    receivedBy: p.receivedBy,
+    receivedBy: p.receivedBy, idempotencyKey: p.idempotencyKey,
   }).returning();
 
   await tx.update(invoices).set({
@@ -189,11 +210,17 @@ export const recordPayment = async (req: ClerkRequest, res: Response) => {
     if (!parsed.success) return sendError(res, parsed.error.issues[0].message, 422);
     const { paymentMethod, referenceNumber, notes } = parsed.data;
 
+    // The billing screen sends a fresh key per payment form, so a double click or a retry is recorded once.
+    const rawKey = req.get("idempotency-key");
+    if (rawKey !== undefined && !/^[A-Za-z0-9_-]{8,100}$/.test(rawKey)) return sendError(res, "Invalid payment key", 422);
+
     const staffRecord = await getStaffByUserId(req.clerkUser!.dbUserId);
-    const payment = await db.transaction((tx) => applyPayment(tx, {
+    const payment: any = await db.transaction((tx) => applyPayment(tx, {
       invoiceId: id, amountCents: toCents(parsed.data.amount), paymentMethod, referenceNumber, notes, receivedBy: staffRecord?.id ?? null,
+      idempotencyKey: rawKey,
     }));
 
+    if (payment.replayed) return sendSuccess(res, payment, "This payment was already recorded", 200);
     await audit(req, "payment.recorded", "payments", payment.id, null, { invoiceId: id, amount: payment.amount, method: paymentMethod });
     return sendSuccess(res, payment, "Payment recorded successfully", 201);
   } catch (err) {
@@ -228,6 +255,7 @@ export const listInvoices = async (req: ClerkRequest, res: Response) => {
       .select({
         id: invoices.id, invoiceNumber: invoices.invoiceNumber, totalAmount: invoices.totalAmount, paidAmount: invoices.paidAmount,
         paymentStatus: invoices.paymentStatus, createdAt: invoices.createdAt, visitId: invoices.visitId,
+        needsPrice: sql<number>`(select count(*) from ${invoiceItems} where ${invoiceItems.invoiceId} = ${invoices.id} and ${invoiceItems.needsPrice})`,
         patientId: patients.id, patientNumber: patients.patientNumber, firstName: idFirstName, lastName: idLastName,
       })
       .from(invoices)
@@ -271,7 +299,7 @@ export const getBillingSummary = async (req: ClerkRequest, res: Response) => {
   }
 };
 
-// Starting points for a new invoice. No price list exists, so only prices already stored are suggested (the doctor's fee).
+// Starting points for a new manual invoice (most charges now arrive on their own; see utils/autoBilling).
 export const suggestCharges = async (req: ClerkRequest, res: Response) => {
   try {
     if (!hasRole(req, ...CASHIER_ROLES)) return sendError(res, "Access denied", 403);
@@ -311,6 +339,20 @@ export const listPrices = async (req: ClerkRequest, res: Response) => {
     return sendSuccess(res, rows);
   } catch (err) {
     return handleError(res, err, "listPrices");
+  }
+};
+
+// Names only (no prices): the order forms suggest these so what a doctor orders matches the price list exactly.
+export const getCatalog = async (req: ClerkRequest, res: Response) => {
+  try {
+    if (!hasRole(req, "doctor", "nurse", "admin", "billing_officer", "receptionist")) return sendError(res, "Access denied", 403);
+    const rows = await db.select({ category: priceItems.category, name: priceItems.name }).from(priceItems).where(eq(priceItems.isActive, true)).orderBy(priceItems.name).limit(1000);
+    const by = (c: string) => rows.filter((r) => r.category === c).map((r) => r.name);
+    // "General ward bed (per day)" is shown to staff as "General ward".
+    const wards = by("ward").map((n) => n.replace(/\s*\(per day\)\s*$/i, "").replace(/\s+bed$/i, "").trim()).filter(Boolean);
+    return sendSuccess(res, { lab: by("lab"), radiology: by("radiology"), pharmacy: by("pharmacy"), ward: wards });
+  } catch (err) {
+    return handleError(res, err, "getCatalog");
   }
 };
 
@@ -444,6 +486,64 @@ export const waiveInvoice = async (req: ClerkRequest, res: Response) => {
     return sendSuccess(res, result, "Invoice waived");
   } catch (err) {
     return handleError(res, err, "waiveInvoice");
+  }
+};
+
+// ── Automatic charges ────────────────────────────────────────────────────────
+// "Refresh charges": re-run the automatic billing for a visit (picks up new ward days and newly priced items).
+export const refreshVisitCharges = async (req: ClerkRequest, res: Response) => {
+  try {
+    if (!hasRole(req, ...CASHIER_ROLES)) return sendError(res, "Access denied", 403);
+    const { visitId } = req.params;
+    if (!isUuid(visitId)) return sendError(res, "Visit not found", 404);
+    const result = await syncVisitCharges(visitId);
+    return sendSuccess(res, result, result.added + result.removed ? "Charges updated" : "Charges are up to date");
+  } catch (err) {
+    return handleError(res, err, "refreshVisitCharges");
+  }
+};
+
+const PRICE_CATEGORY_OF: Record<string, string> = { consult: "consultation", lab: "lab", rad: "radiology", rx: "pharmacy", bed: "ward" };
+
+const priceLineSchema = z.object({
+  unitPrice: money.refine((v) => v > 0, "Enter a price greater than 0"),
+  remember: z.boolean().optional(), // also add it to the price list so the next one prices itself
+}).strict();
+
+// Prices a line that had no match. Only lines waiting for a price can be changed this way; nothing else on an invoice is editable.
+export const priceInvoiceLine = async (req: ClerkRequest, res: Response) => {
+  try {
+    if (!hasRole(req, "admin", "billing_officer")) return sendError(res, "Only the billing officer or an admin can set a price", 403);
+    const { id, itemId } = req.params;
+    if (!isUuid(id) || !isUuid(itemId)) return sendError(res, "Line not found", 404);
+    const parsed = priceLineSchema.safeParse(req.body);
+    if (!parsed.success) return sendError(res, parsed.error.issues[0].message, 422);
+    const unit = toCents(parsed.data.unitPrice);
+
+    const line = await db.transaction(async (tx) => {
+      const [inv] = await tx.select().from(invoices).where(eq(invoices.id, id)).for("update");
+      if (!inv) throw new HttpError(404, "Invoice not found");
+      if (inv.paymentStatus === "waived") throw new HttpError(409, "This invoice has been waived");
+      const [item] = await tx.select().from(invoiceItems).where(and(eq(invoiceItems.id, itemId), eq(invoiceItems.invoiceId, id))).limit(1);
+      if (!item) throw new HttpError(404, "Line not found");
+      if (!item.needsPrice) throw new HttpError(409, "This line already has a price");
+
+      const [row] = await tx.update(invoiceItems).set({ unitPrice: fromCents(unit), totalPrice: fromCents(unit * item.quantity), needsPrice: false })
+        .where(eq(invoiceItems.id, itemId)).returning();
+      await recalcInvoice(tx, id, false);
+
+      if (parsed.data.remember && item.sourceKey) {
+        const category = PRICE_CATEGORY_OF[item.sourceKey.split(":")[0]];
+        const name = item.description.replace(/^(Lab|Imaging|Medicine): /, "").replace(/^Ward bed: /, "").replace(/, bed .*$/, "").replace(/ \(per day\)$/, "").slice(0, 300);
+        if (category && name) await tx.insert(priceItems).values({ category, name, unitPrice: fromCents(unit) }).onConflictDoNothing();
+      }
+      return row;
+    });
+
+    await audit(req, "invoice.line_priced", "invoices", id, null, { itemId, unitPrice: fromCents(unit), remembered: !!parsed.data.remember });
+    return sendSuccess(res, line, "Price set");
+  } catch (err) {
+    return handleError(res, err, "priceInvoiceLine");
   }
 };
 
