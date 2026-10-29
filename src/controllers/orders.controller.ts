@@ -16,13 +16,13 @@ import { ordersForConsultations } from "../utils/orders";
 import { autoBill } from "../utils/autoBilling";
 import { isUuid } from "../utils/validation";
 import { loadForDoctor } from "./consultation.controller";
+import { privateFileUrl, signRecords } from "../utils/cloudinary";
 
 const docUser = alias(users, "orders_doctor_user");
 const need = (req: ClerkRequest, ...roles: string[]) => {
   if (!roles.includes(req.clerkUser!.role)) throw new HttpError(403, "Access denied");
 };
 const hoursAgo = (h: number) => new Date(Date.now() - h * 3600 * 1000);
-const httpsOnly = z.string().trim().url().max(500).refine((u) => u.startsWith("https://"), "Links must start with https://");
 
 // What a patient looks like on a worklist: enough to find and identify them, nothing from their record.
 const patientCols = {
@@ -140,7 +140,7 @@ export const myOrders = async (req: ClerkRequest, res: Response) => {
     const keepRad = radRows.filter((r) => (released ? !!r.releasedAt : !r.releasedAt));
     const labIds = keepLab.map((r) => r.id), radIds = keepRad.map((r) => r.id);
     const labRes = labIds.length ? await db.select().from(labResults).where(inArray(labResults.labOrderId, labIds)) : [];
-    const radRes = radIds.length ? await db.select().from(radiologyResults).where(inArray(radiologyResults.radiologyOrderId, radIds)) : [];
+    const radRes = radIds.length ? signRecords(await db.select().from(radiologyResults).where(inArray(radiologyResults.radiologyOrderId, radIds))) : [];
 
     const out = [
       ...keepLab.map((r) => ({ kind: "lab", ...r, results: labRes.filter((x) => x.labOrderId === r.id) })),
@@ -246,8 +246,8 @@ export const radiologyWorklist = async (req: ClerkRequest, res: Response) => {
 const radResultSchema = z.object({
   findings: z.string().trim().max(10000).optional(),
   impression: z.string().trim().max(5000).optional(),
-  imageUrl: httpsOnly.optional(),
-  reportUrl: httpsOnly.optional(),
+  imageUrl: privateFileUrl("Upload the image with the upload button").optional(),
+  reportUrl: privateFileUrl("Upload the report with the upload button").optional(),
 }).strict();
 
 export const radiologySubmitResult = async (req: ClerkRequest, res: Response) => {
@@ -336,7 +336,7 @@ export const getMyResults = async (req: ClerkRequest, res: Response) => {
     const relLabs = labs.filter((o) => o.releasedAt);
     const relRads = rads.filter((o) => o.releasedAt);
     const labRes = relLabs.length ? await db.select().from(labResults).where(inArray(labResults.labOrderId, relLabs.map((o) => o.id))) : [];
-    const radRes = relRads.length ? await db.select().from(radiologyResults).where(inArray(radiologyResults.radiologyOrderId, relRads.map((o) => o.id))) : [];
+    const radRes = relRads.length ? signRecords(await db.select().from(radiologyResults).where(inArray(radiologyResults.radiologyOrderId, relRads.map((o) => o.id)))) : [];
 
     const out = [
       ...relLabs.map((o) => ({ kind: "lab", id: o.id, name: o.testName, releasedAt: o.releasedAt, results: labRes.filter((r) => r.labOrderId === o.id).map(({ analyte, result, unit, referenceRange, isAbnormal, notes }) => ({ analyte, result, unit, referenceRange, isAbnormal, notes })) })),

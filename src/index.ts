@@ -13,8 +13,11 @@ import { billingRoutes }    from "./routes/billing.routes";
 import { syncRoutes }       from "./routes/sync.routes";
 import { webhookRoutes }    from "./routes/webhook.routes";
 import { newsRoutes }       from "./routes/news.routes";
+import { uploadRoutes }     from "./routes/upload.routes";
 import { contactRoutes }    from "./routes/contact.routes";
 import { adminRoutes }      from "./routes/admin.routes";
+import { bookingRoutes }    from "./routes/booking.routes";
+import { clinicalOnly, clinicalEnabled } from "./middleware/features";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -45,18 +48,22 @@ app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", hospital: "Lisa Hospitals API", version: "1.0.0" });
+  res.json({ status: "ok", hospital: "Lisa Hospitals API", version: "1.0.0", clinical: clinicalEnabled() });
 });
 
 app.use("/api/auth",         authRoutes);
 app.use("/api/departments",  departmentRoutes);
 app.use("/api/doctors",      doctorRoutes);
-app.use("/api/appointments", appointmentRoutes);
-app.use("/api/patients",     patientRoutes);
-app.use("/api/staff",        staffRoutes);
-app.use("/api/billing",      billingRoutes);
-app.use("/api/sync",         syncRoutes);
+app.use("/api/booking",      bookingRoutes);
+
+// Clinical modules: off unless CLINICAL_ENABLED=true (see middleware/features.ts).
+app.use("/api/appointments", clinicalOnly, appointmentRoutes);
+app.use("/api/patients",     clinicalOnly, patientRoutes);
+app.use("/api/staff",        clinicalOnly, staffRoutes);
+app.use("/api/billing",      clinicalOnly, billingRoutes);
+app.use("/api/sync",         clinicalOnly, syncRoutes);
 app.use("/api/news",         newsRoutes);
+app.use("/api/uploads",      uploadRoutes);
 app.use("/api/contact",      contactRoutes);
 app.use("/api/admin",        adminRoutes);
 

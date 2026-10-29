@@ -222,6 +222,8 @@ export const doctorAvailability = pgTable("doctor_availability", {
   startTime:   time("start_time").notNull(),
   endTime:     time("end_time").notNull(),
   maxSlots:    integer("max_slots").notNull().default(20),
+  // Length of one bookable slot in minutes (booking system). Window is cut into slots of this size.
+  slotMinutes: integer("slot_minutes").notNull().default(20),
   isActive:    boolean("is_active").notNull().default(true),
 });
 
@@ -578,6 +580,70 @@ export const auditLogs = pgTable("audit_logs", {
   ipAddress:  varchar("ip_address", { length: 45 }),
   userAgent:  text("user_agent"),
   createdAt:  timestamp("created_at").notNull().defaultNow(),
+});
+
+// ── BOOKING SYSTEM (standalone; does not touch patients/visits/clinical tables) ─────────────────────
+export const bookingStatusEnum = pgEnum("booking_status", ["pending", "confirmed", "completed", "cancelled", "no_show"]);
+
+/** Doctor leave / blocked days (inclusive range, Kenya dates). */
+export const doctorTimeOff = pgTable("doctor_time_off", {
+  id:        uuid("id").primaryKey().defaultRandom(),
+  doctorId:  uuid("doctor_id").notNull().references(() => doctors.id, { onDelete: "cascade" }),
+  startDate: date("start_date").notNull(),
+  endDate:   date("end_date").notNull(),
+  reason:    varchar("reason", { length: 200 }),
+  createdBy: uuid("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+/** Single-row settings table (id = 1). */
+export const bookingSettings = pgTable("booking_settings", {
+  id:                 integer("id").primaryKey().default(1),
+  leadMinutes:        integer("lead_minutes").notNull().default(60),       // earliest bookable = now + this
+  horizonDays:        integer("horizon_days").notNull().default(60),       // how far ahead people can book
+  cutoffHours:        integer("cutoff_hours").notNull().default(4),        // patients can't cancel/reschedule closer than this
+  maxActivePerPhone:  integer("max_active_per_phone").notNull().default(3),
+  updatedAt:          timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const bookings = pgTable("bookings", {
+  id:             uuid("id").primaryKey().defaultRandom(),
+  reference:      varchar("reference", { length: 12 }).notNull().unique(),   // e.g. LH-7K3QX9
+  doctorId:       uuid("doctor_id").notNull().references(() => doctors.id),
+  departmentId:   uuid("department_id").notNull().references(() => departments.id),
+  slotDate:       date("slot_date").notNull(),
+  slotTime:       time("slot_time").notNull(),
+  durationMin:    integer("duration_min").notNull().default(20),
+  status:         bookingStatusEnum("status").notNull().default("pending"),
+  guestName:      varchar("guest_name", { length: 150 }).notNull(),
+  guestPhone:     varchar("guest_phone", { length: 20 }).notNull(),
+  guestEmail:     varchar("guest_email", { length: 255 }),
+  phoneVerified:  boolean("phone_verified").notNull().default(false),
+  reason:         varchar("reason", { length: 300 }),            // optional and deliberately short/generic
+  source:         varchar("source", { length: 20 }).notNull().default("online"), // online | reception
+  manageTokenHash: varchar("manage_token_hash", { length: 64 }).notNull(),
+  createdBy:      uuid("created_by").references(() => users.id),
+  rescheduledFromId: uuid("rescheduled_from_id"),
+  rescheduleCount: integer("reschedule_count").notNull().default(0),
+  cancelledAt:    timestamp("cancelled_at"),
+  cancelledBy:    varchar("cancelled_by", { length: 20 }),       // patient | staff
+  cancelReason:   varchar("cancel_reason", { length: 200 }),
+  createdAt:      timestamp("created_at").notNull().defaultNow(),
+  updatedAt:      timestamp("updated_at").notNull().defaultNow().$onUpdate(() => new Date()),
+}, (t) => ({
+  // The hard guarantee: a doctor can never have two live bookings in the same slot.
+  uniqueLiveSlot: uniqueIndex("bookings_live_slot_uq").on(t.doctorId, t.slotDate, t.slotTime)
+    .where(sql`${t.status} in ('pending','confirmed')`),
+}));
+
+export const bookingOtps = pgTable("booking_otps", {
+  id:        uuid("id").primaryKey().defaultRandom(),
+  phone:     varchar("phone", { length: 20 }).notNull(),
+  codeHash:  varchar("code_hash", { length: 64 }).notNull(),
+  attempts:  integer("attempts").notNull().default(0),
+  expiresAt: timestamp("expires_at").notNull(),
+  usedAt:    timestamp("used_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 // ── RELATIONS ─────────────────────────────────────────────────────────────────

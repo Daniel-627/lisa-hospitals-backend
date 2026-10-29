@@ -6,6 +6,7 @@ import { ClerkRequest } from "../middleware/clerk.middleware";
 import { handleError } from "../utils/errors";
 import { getPatientByUserId, nextNumber } from "../utils/access";
 import { patientProfileUpdateSchema } from "../utils/validation";
+import { signRecords } from "../utils/cloudinary";
 
 export const getMyProfile = async (req: ClerkRequest, res: Response) => {
   try {
@@ -64,7 +65,7 @@ export const getMyDocuments = async (req: ClerkRequest, res: Response) => {
       .where(and(eq(documents.patientId, patient.id), eq(documents.isVisible, true)))
       .orderBy(desc(documents.createdAt));
 
-    return sendSuccess(res, docs);
+    return sendSuccess(res, signRecords(docs));
   } catch (err) {
     return handleError(res, err, "getMyDocuments");
   }

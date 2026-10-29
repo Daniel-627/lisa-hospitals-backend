@@ -318,6 +318,7 @@ const availabilitySchema = z.object({
     startTime: timeStr,
     endTime: timeStr,
     maxSlots: z.number().int().min(1).max(200).default(20),
+    slotMinutes: z.number().int().min(5).max(120).default(20),
   })).max(28),
 });
 
@@ -343,7 +344,7 @@ export const setDoctorAvailability = async (req: ClerkRequest, res: Response) =>
       await tx.delete(doctorAvailability).where(eq(doctorAvailability.doctorId, id));
       if (slots.length === 0) return [];
       return tx.insert(doctorAvailability).values(slots.map((s) => ({
-        doctorId: id, dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime, maxSlots: s.maxSlots, isActive: true,
+        doctorId: id, dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime, maxSlots: s.maxSlots, slotMinutes: s.slotMinutes, isActive: true,
       }))).returning();
     });
 

@@ -11,6 +11,7 @@ import { idEmail, idFirstName, idLastName, idPhone } from "../utils/patientIdent
 import { audit } from "../utils/audit";
 import { BREAK_GLASS_HOURS, BREAK_GLASS_ROLES, primaryDoctorFor, resolveAccess } from "../utils/patientAccess";
 import { consultationHistory } from "../utils/consultationHistory";
+import { privateFileUrl, signRecords } from "../utils/cloudinary";
 
 const deny = (res: Response) => sendError(res, "Access denied", 403);
 
@@ -161,7 +162,7 @@ export const getPatientById = async (req: ClerkRequest, res: Response) => {
 
     return sendSuccess(res, {
       ...shown, hasAccount, accessLevel: "clinical", accessReason: access.reason, accessExpiresAt: access.expiresAt ?? null,
-      appointments: patientAppointments, documents: patientDocuments, consultations: consultationList,
+      appointments: patientAppointments, documents: signRecords(patientDocuments), consultations: consultationList,
     });
   } catch (err) {
     return handleError(res, err, "getPatientById");
@@ -359,7 +360,7 @@ const documentSchema = z.object({
     "antenatal_card", "invoice", "insurance_claim", "admission_letter",
   ]),
   title:     z.string().trim().min(1).max(200),
-  fileUrl:   z.string().url().max(500).refine((u) => u.startsWith("https://"), "File URL must use https"),
+  fileUrl:   privateFileUrl("Upload the document with the upload button"),
   fileSize:  z.number().int().min(0).optional(),
   mimeType:  z.string().max(100).optional(),
   relatedId: uuid.optional(),
