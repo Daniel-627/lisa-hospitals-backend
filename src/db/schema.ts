@@ -224,6 +224,8 @@ export const doctorAvailability = pgTable("doctor_availability", {
   maxSlots:    integer("max_slots").notNull().default(20),
   // Length of one bookable slot in minutes (booking system). Window is cut into slots of this size.
   slotMinutes: integer("slot_minutes").notNull().default(20),
+  // Last N slots of this block are kept back from online booking for reception / walk-ins.
+  walkinSlots: integer("walkin_slots").notNull().default(0),
   isActive:    boolean("is_active").notNull().default(true),
 });
 
@@ -591,6 +593,9 @@ export const doctorTimeOff = pgTable("doctor_time_off", {
   doctorId:  uuid("doctor_id").notNull().references(() => doctors.id, { onDelete: "cascade" }),
   startDate: date("start_date").notNull(),
   endDate:   date("end_date").notNull(),
+  // Both NULL = the whole day(s). Both set = only those hours (then startDate = endDate).
+  startTime: time("start_time"),
+  endTime:   time("end_time"),
   reason:    varchar("reason", { length: 200 }),
   createdBy: uuid("created_by").references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -620,6 +625,8 @@ export const bookings = pgTable("bookings", {
   guestEmail:     varchar("guest_email", { length: 255 }),
   phoneVerified:  boolean("phone_verified").notNull().default(false),
   reason:         varchar("reason", { length: 300 }),            // optional and deliberately short/generic
+  serviceId:      uuid("service_id"),
+  lang:           varchar("lang", { length: 2 }).notNull().default("en"), // language for texts to the patient (en | sw)
   source:         varchar("source", { length: 20 }).notNull().default("online"), // online | reception
   manageTokenHash: varchar("manage_token_hash", { length: 64 }).notNull(),
   createdBy:      uuid("created_by").references(() => users.id),
@@ -628,6 +635,14 @@ export const bookings = pgTable("bookings", {
   cancelledAt:    timestamp("cancelled_at"),
   cancelledBy:    varchar("cancelled_by", { length: 20 }),       // patient | staff
   cancelReason:   varchar("cancel_reason", { length: 200 }),
+  // Follow-up: why reception must call (doctor_request | time_off | unverified | repeat_noshow), shown in red on the desk.
+  flag:           varchar("flag", { length: 20 }),
+  flagReason:     varchar("flag_reason", { length: 300 }),       // internal (e.g. the doctor's reason). Never sent to the patient.
+  flagSuggestion: varchar("flag_suggestion", { length: 300 }),   // doctor's suggested alternative, if any
+  reconfirmedAt:  timestamp("reconfirmed_at"),                    // reception spoke to the patient and they are still coming
+  checkedInAt:    timestamp("checked_in_at"),                     // patient arrived (this is "attended")
+  callAttempts:   integer("call_attempts").notNull().default(0),
+  lastCallAt:     timestamp("last_call_at"),
   createdAt:      timestamp("created_at").notNull().defaultNow(),
   updatedAt:      timestamp("updated_at").notNull().defaultNow().$onUpdate(() => new Date()),
 }, (t) => ({
@@ -635,6 +650,65 @@ export const bookings = pgTable("bookings", {
   uniqueLiveSlot: uniqueIndex("bookings_live_slot_uq").on(t.doctorId, t.slotDate, t.slotTime)
     .where(sql`${t.status} in ('pending','confirmed')`),
 }));
+
+/** Every call reception makes about a booking. */
+export const bookingCalls = pgTable("booking_calls", {
+  id:        uuid("id").primaryKey().defaultRandom(),
+  bookingId: uuid("booking_id").notNull().references(() => bookings.id, { onDelete: "cascade" }),
+  userId:    uuid("user_id").references(() => users.id),
+  outcome:   varchar("outcome", { length: 20 }).notNull(), // coming | no_answer | other
+  note:      varchar("note", { length: 300 }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+/** What a patient can ask for inside a department ("Dental check-up", 20 min). Optional: departments without services book by doctor. */
+export const bookingServices = pgTable("booking_services", {
+  id:           uuid("id").primaryKey().defaultRandom(),
+  departmentId: uuid("department_id").notNull().references(() => departments.id),
+  name:         varchar("name", { length: 120 }).notNull(),
+  nameSw:       varchar("name_sw", { length: 120 }),
+  durationMin:  integer("duration_min").notNull().default(20),
+  sortOrder:    integer("sort_order").notNull().default(0),
+  isActive:     boolean("is_active").notNull().default(true),
+  createdAt:    timestamp("created_at").notNull().defaultNow(),
+});
+
+/** Which doctors perform a service. */
+export const bookingServiceDoctors = pgTable("booking_service_doctors", {
+  id:        uuid("id").primaryKey().defaultRandom(),
+  serviceId: uuid("service_id").notNull().references(() => bookingServices.id, { onDelete: "cascade" }),
+  doctorId:  uuid("doctor_id").notNull().references(() => doctors.id, { onDelete: "cascade" }),
+}, (t) => ({ uq: uniqueIndex("booking_service_doctors_uq").on(t.serviceId, t.doctorId) }));
+
+/** Days the whole hospital is closed to online booking (public holidays, strikes, etc.). */
+export const bookingHolidays = pgTable("booking_holidays", {
+  id:        uuid("id").primaryKey().defaultRandom(),
+  date:      date("date").notNull().unique(),
+  name:      varchar("name", { length: 120 }).notNull(),
+  createdBy: uuid("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+/** People who found the calendar full and left their number. Reception offers them a slot when one opens. */
+export const bookingWaitlist = pgTable("booking_waitlist", {
+  id:            uuid("id").primaryKey().defaultRandom(),
+  departmentId:  uuid("department_id").notNull().references(() => departments.id),
+  doctorId:      uuid("doctor_id").references(() => doctors.id),
+  serviceId:     uuid("service_id"),
+  fromDate:      date("from_date").notNull(),
+  toDate:        date("to_date"),
+  guestName:     varchar("guest_name", { length: 150 }).notNull(),
+  guestPhone:    varchar("guest_phone", { length: 20 }).notNull(),
+  phoneVerified: boolean("phone_verified").notNull().default(false),
+  note:          varchar("note", { length: 200 }),
+  lang:          varchar("lang", { length: 2 }).notNull().default("en"),
+  status:        varchar("status", { length: 12 }).notNull().default("waiting"), // waiting | booked | removed
+  callAttempts:  integer("call_attempts").notNull().default(0),
+  lastCallAt:    timestamp("last_call_at"),
+  bookingId:     uuid("booking_id"),
+  createdAt:     timestamp("created_at").notNull().defaultNow(),
+  updatedAt:     timestamp("updated_at").notNull().defaultNow().$onUpdate(() => new Date()),
+});
 
 export const bookingOtps = pgTable("booking_otps", {
   id:        uuid("id").primaryKey().defaultRandom(),
