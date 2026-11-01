@@ -55,3 +55,10 @@ If you already ran `4-booking-schema.sql` once, run the new version again (safe 
 - Reception: confirm, move (any doctor in the department), cancel, mark attended/no-show, book for callers.
 - Doctors see their own schedule: names and times only. Nurses and other roles have no access.
 - Every staff action is in the audit log.
+
+## Lisa chat (newest)
+- Re-run `4-booking-schema.sql` in Neon (adds `chat_threads`, `chat_messages`).
+- Signed-in patients: Messages (talk to "Lisa") and My visits (their bookings, matched on the phone/email of their account). They never see staff names.
+- Front desk / admin: Staff portal → Lisa chat. One shared inbox; each reply is labelled with the colleague's name and role (colleagues only).
+- Signed-out visitors: the "Talk to Lisa" button on the public site is a small built-in helper (hours, location, booking, insurance). It runs in the browser, stores nothing, and after a few messages or any personal/advanced question it sends the visitor to sign in.
+- Chat updates by polling every few seconds (no extra service needed).

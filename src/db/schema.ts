@@ -797,3 +797,24 @@ export const syncQueue = pgTable("sync_queue", {
   // A given client item can be applied once; failed attempts may be retried freely.
   syncedOnce: uniqueIndex("sync_queue_synced_uidx").on(t.deviceId, t.clientId).where(sql`${t.status} = 'synced'`),
 }));
+
+// ── Patient ↔ Lisa chat ───────────────────────────────────────────────────────
+/** One conversation per signed-in patient. The patient sees only "Lisa"; staff see the patient and which colleague wrote each reply. */
+export const chatThreads = pgTable("chat_threads", {
+  id:            uuid("id").primaryKey().defaultRandom(),
+  patientUserId: uuid("patient_user_id").notNull().unique().references(() => users.id, { onDelete: "cascade" }),
+  lastMessageAt: timestamp("last_message_at").notNull().defaultNow(),
+  lastSender:    varchar("last_sender", { length: 8 }).notNull().default("patient"), // patient | staff
+  patientReadAt: timestamp("patient_read_at"),
+  staffReadAt:   timestamp("staff_read_at"),
+  createdAt:     timestamp("created_at").notNull().defaultNow(),
+});
+
+export const chatMessages = pgTable("chat_messages", {
+  id:         uuid("id").primaryKey().defaultRandom(),
+  threadId:   uuid("thread_id").notNull().references(() => chatThreads.id, { onDelete: "cascade" }),
+  sender:     varchar("sender", { length: 8 }).notNull(),            // patient | staff
+  senderUserId: uuid("sender_user_id").references(() => users.id),   // which staff member wrote it (never shown to the patient)
+  body:       varchar("body", { length: 2000 }).notNull(),
+  createdAt:  timestamp("created_at").notNull().defaultNow(),
+});

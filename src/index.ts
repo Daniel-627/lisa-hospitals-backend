@@ -17,6 +17,7 @@ import { uploadRoutes }     from "./routes/upload.routes";
 import { contactRoutes }    from "./routes/contact.routes";
 import { adminRoutes }      from "./routes/admin.routes";
 import { bookingRoutes }    from "./routes/booking.routes";
+import { chatRoutes }       from "./routes/chat.routes";
 import { clinicalOnly, clinicalEnabled } from "./middleware/features";
 
 const app = express();
@@ -55,6 +56,7 @@ app.use("/api/auth",         authRoutes);
 app.use("/api/departments",  departmentRoutes);
 app.use("/api/doctors",      doctorRoutes);
 app.use("/api/booking",      bookingRoutes);
+app.use("/api/chat",         chatRoutes);
 
 // Clinical modules: off unless CLINICAL_ENABLED=true (see middleware/features.ts).
 app.use("/api/appointments", clinicalOnly, appointmentRoutes);

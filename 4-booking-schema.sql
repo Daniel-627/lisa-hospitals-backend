@@ -149,3 +149,24 @@ DO $$ BEGIN
   END IF;
 EXCEPTION WHEN others THEN RAISE NOTICE 'Overlap constraint skipped: %', SQLERRM;
 END $$;
+
+-- Patient ↔ Lisa chat (signed-in patients talk to the front desk as "Lisa"; staff see who replied).
+CREATE TABLE IF NOT EXISTS chat_threads (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_user_id uuid NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  last_message_at timestamp NOT NULL DEFAULT now(),
+  last_sender varchar(8) NOT NULL DEFAULT 'patient',
+  patient_read_at timestamp,
+  staff_read_at timestamp,
+  created_at timestamp NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS chat_threads_last_idx ON chat_threads (last_message_at DESC);
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  thread_id uuid NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+  sender varchar(8) NOT NULL,
+  sender_user_id uuid REFERENCES users(id),
+  body varchar(2000) NOT NULL,
+  created_at timestamp NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS chat_messages_thread_idx ON chat_messages (thread_id, created_at);
