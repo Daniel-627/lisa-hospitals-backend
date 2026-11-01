@@ -19,5 +19,8 @@ chatRoutes.get("/visits",       ...patient, c.myVisits);
 // Staff inbox
 chatRoutes.get("/threads",          ...front, c.staffList);
 chatRoutes.get("/threads/unread",   ...front, c.staffUnread);
+chatRoutes.get("/patients",          ...front, c.staffFindPatients);
+chatRoutes.post("/threads",          ...front, send, c.staffStartChat);
+chatRoutes.post("/threads/:id/seen", ...front, c.staffSeen);
 chatRoutes.get("/threads/:id",       ...front, c.staffOpen);
 chatRoutes.post("/threads/:id",      ...front, send, c.staffReply);

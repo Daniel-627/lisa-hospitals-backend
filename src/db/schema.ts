@@ -815,6 +815,9 @@ export const chatMessages = pgTable("chat_messages", {
   threadId:   uuid("thread_id").notNull().references(() => chatThreads.id, { onDelete: "cascade" }),
   sender:     varchar("sender", { length: 8 }).notNull(),            // patient | staff
   senderUserId: uuid("sender_user_id").references(() => users.id),   // which staff member wrote it (never shown to the patient)
-  body:       varchar("body", { length: 2000 }).notNull(),
+  body:       varchar("body", { length: 2000 }).notNull(),          // may be "" when the message is just a file
+  attachmentUrl:  varchar("attachment_url", { length: 500 }),       // private Cloudinary file; signed link only when delivered
+  attachmentName: varchar("attachment_name", { length: 150 }),
+  attachmentKind: varchar("attachment_kind", { length: 8 }),        // image | file
   createdAt:  timestamp("created_at").notNull().defaultNow(),
 });

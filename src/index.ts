@@ -1,3 +1,4 @@
+import http from "http";
 import express, { NextFunction, Request, Response } from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -19,6 +20,7 @@ import { adminRoutes }      from "./routes/admin.routes";
 import { bookingRoutes }    from "./routes/booking.routes";
 import { chatRoutes }       from "./routes/chat.routes";
 import { clinicalOnly, clinicalEnabled } from "./middleware/features";
+import { initRealtime } from "./realtime";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -83,7 +85,10 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 
 process.on("unhandledRejection", (reason) => console.error("Unhandled rejection:", reason));
 
-app.listen(PORT, () => {
+const server = http.createServer(app);
+initRealtime(server, allowedOrigins);   // live chat (WebSocket, with polling fallback)
+
+server.listen(PORT, () => {
   console.log(`Lisa Hospitals API running on port ${PORT}`);
 });
 

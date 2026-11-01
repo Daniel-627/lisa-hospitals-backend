@@ -15,7 +15,7 @@ export const mineMessages = async (req: ClerkRequest, res: Response) => {
   catch (e) { handleError(res, e, "chat.mine"); }
 };
 export const mineSend = async (req: ClerkRequest, res: Response) => {
-  try { sendSuccess(res, await chat.patientSend(me(req), req.body?.body), undefined, 201); }
+  try { sendSuccess(res, await chat.patientSend(me(req), req.body?.body, req.body?.attachment), undefined, 201); }
   catch (e) { handleError(res, e, "chat.mineSend"); }
 };
 export const mineRead = async (req: ClerkRequest, res: Response) => {
@@ -44,13 +44,29 @@ export const staffUnread = async (_req: ClerkRequest, res: Response) => {
 export const staffOpen = async (req: ClerkRequest, res: Response) => {
   try {
     if (!isUuid(req.params.id)) return sendError(res, "Conversation not found", 404);
-    sendSuccess(res, await chat.staffThread(req.params.id, me(req)));
+    sendSuccess(res, await chat.staffThread(req.params.id, me(req), { markRead: req.query.peek !== "1" }));
   } catch (e) { handleError(res, e, "chat.staffOpen"); }
 };
 export const staffReply = async (req: ClerkRequest, res: Response) => {
   try {
     if (!isUuid(req.params.id)) return sendError(res, "Conversation not found", 404);
-    await chat.staffSend(req.params.id, me(req), req.body?.body);
+    await chat.staffSend(req.params.id, me(req), req.body?.body, req.body?.attachment);
     sendSuccess(res, null, undefined, 201);
   } catch (e) { handleError(res, e, "chat.staffReply"); }
+};
+
+export const staffFindPatients = async (req: ClerkRequest, res: Response) => {
+  try { sendSuccess(res, await chat.findPatients(typeof req.query.q === "string" ? req.query.q : "")); } catch (e) { handleError(res, e, "chat.find"); }
+};
+export const staffStartChat = async (req: ClerkRequest, res: Response) => {
+  try {
+    if (!isUuid(req.body?.patientUserId)) return sendError(res, "Choose a patient", 422);
+    sendSuccess(res, await chat.staffStart(me(req), req.body.patientUserId, req.body?.body, req.body?.attachment), undefined, 201);
+  } catch (e) { handleError(res, e, "chat.start"); }
+};
+export const staffSeen = async (req: ClerkRequest, res: Response) => {
+  try {
+    if (!isUuid(req.params.id)) return sendError(res, "Conversation not found", 404);
+    await chat.staffMarkRead(req.params.id); sendSuccess(res, null);
+  } catch (e) { handleError(res, e, "chat.seen"); }
 };

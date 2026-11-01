@@ -61,4 +61,7 @@ If you already ran `4-booking-schema.sql` once, run the new version again (safe 
 - Signed-in patients: Messages (talk to "Lisa") and My visits (their bookings, matched on the phone/email of their account). They never see staff names.
 - Front desk / admin: Staff portal → Lisa chat. One shared inbox; each reply is labelled with the colleague's name and role (colleagues only).
 - Signed-out visitors: the "Talk to Lisa" button on the public site is a small built-in helper (hours, location, booking, insurance). It runs in the browser, stores nothing, and after a few messages or any personal/advanced question it sends the visitor to sign in.
-- Chat updates by polling every few seconds (no extra service needed).
+- Chat is realtime (Socket.IO over WebSocket, falling back to polling). Messages, "typing…", "Seen", who is online, unread badges and new conversations all appear instantly. Render supports WebSockets with no extra setting. FRONTEND_URL must list your site (already required for CORS).
+- Attachments (photo/PDF, 8 MB) use the same Cloudinary keys as before and are stored privately.
+- The online list is kept in memory, which is right for one Render instance (don't scale to several without adding Redis). On Render's free plan the server sleeps when idle; chat reconnects by itself when it wakes.
+- Front desk can start a chat with any patient who has an account (New chat) and use ready-made quick replies.

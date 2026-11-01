@@ -170,3 +170,8 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   created_at timestamp NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS chat_messages_thread_idx ON chat_messages (thread_id, created_at);
+
+-- Chat attachments (images / PDFs), added with realtime chat.
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS attachment_url varchar(500);
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS attachment_name varchar(150);
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS attachment_kind varchar(8);

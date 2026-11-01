@@ -27,7 +27,11 @@ export type ClerkRequest = Request & {
 async function verifyBearer(req: Request): Promise<string | null> {
   const header = req.headers.authorization;
   if (!header?.startsWith("Bearer ")) return null;
-  const token = header.slice(7).trim();
+  return verifyClerkToken(header.slice(7).trim());
+}
+
+/** Verifies a raw Clerk session token (also used by the realtime socket handshake) and returns the Clerk user id, or null. */
+export async function verifyClerkToken(token: string): Promise<string | null> {
   if (!token) return null;
 
   try {

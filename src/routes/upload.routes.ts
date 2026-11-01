@@ -18,7 +18,7 @@ uploadRoutes.post("/sign", authenticate, rateLimit({ windowMs: 60 * 1000, max: 3
     if (!parsed.success) return sendError(res, "Unknown upload type", 422);
     const purpose = parsed.data.purpose;
     // Booking-only mode: just the public images (doctor photos, news covers). Private clinical files stay off.
-    if (!clinicalEnabled() && UPLOAD_PURPOSES[purpose].access !== "public") return sendError(res, "This feature is not enabled", 404);
+    if (!clinicalEnabled() && UPLOAD_PURPOSES[purpose].access !== "public" && purpose !== "chat_file") return sendError(res, "This feature is not enabled", 404);
     if (!(UPLOAD_PURPOSES[purpose].roles as readonly string[]).includes(req.clerkUser!.role)) return sendError(res, "Access denied", 403);
     const out = signUpload(purpose);
     await audit(req, "upload.signed", "uploads", null, null, { purpose, access: out.access });

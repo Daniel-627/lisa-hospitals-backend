@@ -43,6 +43,7 @@ export const UPLOAD_PURPOSES = {
   news_cover:       { access: "public",  folder: "lisa/public/news",          roles: ["admin"],                          formats: ["jpg", "jpeg", "png", "webp"],                  maxMb: 8,  label: "News cover image" },
   patient_document: { access: "private", folder: "lisa/private/documents",    roles: CLINICAL,                           formats: ["pdf", "jpg", "jpeg", "png", "webp"],           maxMb: 10, label: "Patient document" },
   radiology_image:  { access: "private", folder: "lisa/private/radiology",    roles: ["admin", "radiographer", "doctor"], formats: ["jpg", "jpeg", "png", "webp"],                  maxMb: 10, label: "Radiology image" },
+  chat_file:        { access: "private", folder: "lisa/private/chat",       roles: ["patient", "admin", "receptionist"], formats: ["pdf", "jpg", "jpeg", "png", "webp"],         maxMb: 8,  label: "Chat attachment" },
   radiology_report: { access: "private", folder: "lisa/private/radiology",    roles: ["admin", "radiographer", "doctor"], formats: ["pdf", "jpg", "jpeg", "png", "webp"],           maxMb: 10, label: "Radiology report" },
 } as const satisfies Record<string, UploadPurpose>;
 
